@@ -8,6 +8,7 @@ import io.github.tangyuan1129.chataside.core.Prefs
 import io.github.tangyuan1129.chataside.core.RankedReply
 import io.github.tangyuan1129.chataside.core.Score
 import io.github.tangyuan1129.chataside.core.kb.ChatContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -91,12 +92,54 @@ class JudgeClient(private val prefs: Prefs) {
 
     private fun send(state: JSONObject, questions: JSONObject): JSONObject {
         val url = prefs.judgeEndpoint()
+        // One branch, right here: everything above builds the questions, and
+        // everything below parses the answers, so neither has to care which
+        // protocol carried them.
+        if (prefs.judgeProvider == Prefs.PROVIDER_CHAT) return sendViaChat(url, state, questions)
+
         val body = JSONObject()
             .put("model", prefs.judgeModel)
             .put("state", state)
             .put("questions", questions)
         val resp = HttpJson.post(url, prefs.judgeKey, body, Route.JUDGE, HttpJson.headersFor(url))
         return resp.optJSONObject("answers") ?: JSONObject()
+    }
+
+    /**
+     * Sends the same questions as an ordinary chat completion instead of a Jev
+     * decision request, so a plain model (DeepSeek, Qwen, anything OpenAI-shaped)
+     * can do the judging.
+     *
+     * `temperature` is pinned to 0: this is a classification task, and a model
+     * that wanders will produce keys we have no meaning for.
+     *
+     * No `response_format` is sent even though some providers accept it — an
+     * unsupported parameter turns into a 400 on the providers that do not, and
+     * [JevChat.extractJson] already copes with a fenced or padded reply.
+     */
+    private fun sendViaChat(url: String, state: JSONObject, questions: JSONObject): JSONObject {
+        val user = JevChat.stateBlock(state) + "\n" + JevChat.questionsBlock(questions)
+        val messages = JSONArray()
+            .put(JSONObject().put("role", "system").put("content", JevChat.systemPrompt()))
+            .put(JSONObject().put("role", "user").put("content", user))
+
+        val body = JSONObject()
+            .put("model", prefs.judgeModel)
+            .put("messages", messages)
+            .put("temperature", 0.0)
+
+        val resp = HttpJson.post(url, prefs.judgeKey, body, Route.JUDGE, HttpJson.headersFor(url))
+        val content = resp.optJSONArray("choices")
+            ?.optJSONObject(0)
+            ?.optJSONObject("message")
+            ?.optString("content")
+            .orEmpty()
+
+        if (content.isBlank()) {
+            throw ApiException(Route.JUDGE, null, "聊天模型返回了空内容")
+        }
+        return JevChat.parseAnswers(content)
+            ?: throw ApiException(Route.JUDGE, null, "模型没有按要求返回 JSON：${content.take(80)}")
     }
 
     private fun parseChoice(o: JSONObject?): Choice? {

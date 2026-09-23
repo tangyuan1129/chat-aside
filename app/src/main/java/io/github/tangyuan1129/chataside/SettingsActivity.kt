@@ -176,10 +176,11 @@ class SettingsActivity : AppCompatActivity() {
         judgeProviderIdx = when (prefs.judgeProvider) {
             Prefs.PROVIDER_TYPESAFE -> 1
             Prefs.PROVIDER_CUSTOM -> 2
+            Prefs.PROVIDER_CHAT -> 3
             else -> 0
         }
         judgeCard.addView(pills(
-            listOf("OpenRouter", "TypeSafe 直连", "自定义"), judgeProviderIdx) { idx ->
+            listOf("OpenRouter", "TypeSafe 直连", "自定义", "聊天模型兼任判断"), judgeProviderIdx) { idx ->
             judgeProviderIdx = idx
             when (idx) {
                 0 -> {
@@ -194,11 +195,24 @@ class SettingsActivity : AppCompatActivity() {
                 // would hit the API root. Expand it into the full endpoint the
                 // preset would have used; anything hand-typed is left alone.
                 2 -> judgeBaseEdit.setText(expandJudgeUrl(judgeBaseEdit.text.toString()))
+                // Chat-as-judge wears the same shape as the reply route, and most
+                // people point both at one provider — so start from whatever the
+                // reply route is already set to instead of making them retype it.
+                3 -> {
+                    judgeBaseEdit.setText(prefs.replyBaseUrl.trim().ifBlank { Prefs.DEFAULT_REPLY_BASE })
+                    judgeModelEdit.setText(prefs.replyModel.trim().ifBlank { Prefs.DEFAULT_REPLY_MODEL })
+                }
             }
         })
         judgeCard.addView(label("Base URL"))
         judgeCard.addView(judgeBaseEdit)
-        judgeCard.addView(text("OpenRouter 拼 /alpha/decisions；TypeSafe 拼 /v1/systemone；自定义按原样 POST。",
+        judgeCard.addView(text(
+            "前两档拼各自的专用路径；「自定义」按原样 POST（要填到接口全路径）；" +
+                "「聊天模型兼任判断」拼 /chat/completions，填到 /v1 为止即可。",
+            11f, sub))
+        judgeCard.addView(text(
+            "只有 OpenRouter 和 TypeSafe 提供 Jev 判断模型。如果你手上只有国内模型的密钥，" +
+                "就选「聊天模型兼任判断」——用同一个聊天模型顺带把判断也做了，只需一把密钥。",
             11f, sub))
         judgeCard.addView(label("密钥"))
         judgeCard.addView(edit(prefs.judgeKey, "sk-...", password = true).also { judgeKeyEdit = it })
@@ -548,6 +562,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun providerOf(idx: Int) = when (idx) {
         1 -> Prefs.PROVIDER_TYPESAFE
         2 -> Prefs.PROVIDER_CUSTOM
+        3 -> Prefs.PROVIDER_CHAT
         else -> Prefs.PROVIDER_OPENROUTER
     }
 
@@ -571,13 +586,19 @@ class SettingsActivity : AppCompatActivity() {
         else -> base.trim()
     }
 
-    private fun defaultJudgeBase(provider: String): String =
-        if (provider == Prefs.PROVIDER_TYPESAFE) Prefs.DEFAULT_JUDGE_BASE_TYPESAFE
-        else Prefs.DEFAULT_JUDGE_BASE_OPENROUTER
+    private fun defaultJudgeBase(provider: String): String = when (provider) {
+        Prefs.PROVIDER_TYPESAFE -> Prefs.DEFAULT_JUDGE_BASE_TYPESAFE
+        // Chat-as-judge talks to the same kind of endpoint the reply route does,
+        // so it borrows that default rather than inventing a third one.
+        Prefs.PROVIDER_CHAT -> Prefs.DEFAULT_REPLY_BASE
+        else -> Prefs.DEFAULT_JUDGE_BASE_OPENROUTER
+    }
 
-    private fun defaultJudgeModel(provider: String): String =
-        if (provider == Prefs.PROVIDER_TYPESAFE) Prefs.DEFAULT_JUDGE_MODEL_TYPESAFE
-        else Prefs.DEFAULT_JUDGE_MODEL_OPENROUTER
+    private fun defaultJudgeModel(provider: String): String = when (provider) {
+        Prefs.PROVIDER_TYPESAFE -> Prefs.DEFAULT_JUDGE_MODEL_TYPESAFE
+        Prefs.PROVIDER_CHAT -> Prefs.DEFAULT_REPLY_MODEL
+        else -> Prefs.DEFAULT_JUDGE_MODEL_OPENROUTER
+    }
 
     /**
      * A throwaway [Prefs] view carrying exactly what is in the boxes right now,

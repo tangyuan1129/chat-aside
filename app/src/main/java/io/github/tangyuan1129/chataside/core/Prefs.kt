@@ -247,6 +247,9 @@ class Prefs(context: Context, prefsName: String = PREFS_MAIN) {
         return when (judgeProvider) {
             PROVIDER_TYPESAFE -> "$base/v1/systemone"
             PROVIDER_CUSTOM -> judgeBaseUrl.trim()   // user supplies the full URL
+            // Chat-model-as-judge speaks the ordinary chat protocol, so the URL is
+            // built the same way the reply route builds it.
+            PROVIDER_CHAT -> "${judgeBaseUrl.trim().ifBlank { DEFAULT_REPLY_BASE }.trimEnd('/')}/chat/completions"
             else -> "$base/alpha/decisions"
         }
     }
@@ -310,6 +313,14 @@ class Prefs(context: Context, prefsName: String = PREFS_MAIN) {
         const val PROVIDER_OPENROUTER = "openrouter"
         const val PROVIDER_TYPESAFE = "typesafe"
         const val PROVIDER_CUSTOM = "custom"
+
+        /**
+         * Use an ordinary OpenAI-compatible chat model as the judge, instead of
+         * the Jev decision endpoint. Exists because requiring a Jev key shut out
+         * everyone who only has a domestic model key — with this, one DeepSeek
+         * key is enough to run the whole app.
+         */
+        const val PROVIDER_CHAT = "chatjudge"
 
         /** Overlay presentation modes — see [overlayMode]. */
         const val MODE_CHOOSER = "chooser"
