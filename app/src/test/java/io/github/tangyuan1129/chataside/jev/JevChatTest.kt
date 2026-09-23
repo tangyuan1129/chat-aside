@@ -403,4 +403,62 @@ class JevChatTest {
         assertNotNull(ans)
         assertTrue("an unknown position must not be guessed onto a question", ans!!.has("99"))
     }
+
+    // ------------------------------------- the 0% ranking lines (real-device bug)
+    // A WeChat run rendered every candidate as "#1 · 0%" because the model named
+    // its pick without a distribution and the ranker reads `probabilities`.
+
+    @Test
+    fun `a named pick gets a one-hot probabilities map`() {
+        val raw = """{"answers":{"true_intent":{"choice":"request_action"}}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        val probs = ans!!.getJSONObject("true_intent").getJSONObject("probabilities")
+        assertEquals(1.0, probs.getDouble("request_action"), 0.001)
+        assertEquals(1, probs.length())
+    }
+
+    @Test
+    fun `an existing distribution is left untouched`() {
+        val raw = """{"answers":{"true_intent":{"choice":"vent_anger","probabilities":{"vent_anger":0.7,"care":0.3}}}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        val probs = ans!!.getJSONObject("true_intent").getJSONObject("probabilities")
+        assertEquals(0.3, probs.getDouble("care"), 0.001)
+        assertEquals("a one-hot map must not overwrite the model's own spread", 2, probs.length())
+    }
+
+    @Test
+    fun `a bare-string choice also gets a one-hot map`() {
+        val raw = """{"answers":{"best_action":"apologize"}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        val a = ans!!.getJSONObject("best_action")
+        assertEquals("apologize", a.getString("choice"))
+        assertEquals(1.0, a.getJSONObject("probabilities").getDouble("apologize"), 0.001)
+    }
+
+    @Test
+    fun `the ranking answer becomes rankable`() {
+        // What the rank call actually gets back: {"answers":{"best_reply": ...}}
+        val questions = JSONObject().put(
+            "best_reply",
+            JevQuestions.rankQuestion(listOf("甲", "乙", "丙")).getJSONObject("best_reply")
+        )
+        val raw = """{"answers":{"best_reply":"reply_b"}}"""
+        val ans = JevChat.parseAnswers(raw, questions)
+        assertNotNull(ans)
+        val probs = ans!!.getJSONObject("best_reply").getJSONObject("probabilities")
+        assertEquals("the picked candidate must outrank the others", 1.0, probs.getDouble("reply_b"), 0.001)
+        assertEquals(0.0, probs.optDouble("reply_a", 0.0), 0.001)
+    }
+
+    @Test
+    fun `score and noul answers are not given probabilities`() {
+        val raw = """{"answers":{"danger_level":4,"tension_resolved":false}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertFalse(ans!!.getJSONObject("danger_level").has("probabilities"))
+        assertFalse(ans.getJSONObject("tension_resolved").has("probabilities"))
+    }
 }

@@ -185,15 +185,37 @@ object JevChat {
         answers.keys().asSequence().forEach { rawKey ->
             val id = resolveId(rawKey, types, order)
             val type = types[id].orEmpty()
-            when (val value = answers.opt(rawKey)) {
-                is JSONObject -> out.put(id, coerceObject(value, type))
-                is String -> out.put(id, fromScalar(value, type))
-                is Boolean -> out.put(id, JSONObject().put("noul", if (value) 1.0 else 0.0))
-                is Number -> out.put(id, fromNumber(value.toDouble(), type))
-                else -> if (value != null) out.put(id, value)
+            val normalised = when (val value = answers.opt(rawKey)) {
+                is JSONObject -> coerceObject(value, type)
+                is String -> fromScalar(value, type)
+                is Boolean -> JSONObject().put("noul", if (value) 1.0 else 0.0)
+                is Number -> fromNumber(value.toDouble(), type)
+                else -> null
+            }
+            when {
+                normalised != null -> out.put(id, withProbabilities(normalised))
+                answers.opt(rawKey) != null -> out.put(id, answers.opt(rawKey))
             }
         }
         return out
+    }
+
+    /**
+     * Gives a choice answer a `probabilities` map when it has none.
+     *
+     * The ranking question is read back through `probabilities`, but a chat model
+     * normally just names its pick. Without this every candidate scores 0% and the
+     * panel shows two identical "0%" lines — seen on a real WeChat run.
+     *
+     * One-hot rather than a made-up spread: all we actually know is which
+     * candidate was chosen, and inventing a distribution would dress a guess up
+     * as a measurement.
+     */
+    private fun withProbabilities(obj: JSONObject): JSONObject {
+        if (obj.has("probabilities")) return obj
+        val choice = obj.optString("choice").trim()
+        if (choice.isEmpty()) return obj
+        return JSONObject(obj.toString()).put("probabilities", JSONObject().put(choice, 1.0))
     }
 
     /**

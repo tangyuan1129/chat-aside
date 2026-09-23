@@ -141,12 +141,17 @@ class JudgeClient(private val prefs: Prefs) {
         val answers = JevChat.parseAnswers(content, questions)
             ?: throw ApiException(Route.JUDGE, null, "模型没有按要求返回 JSON：${content.take(80)}")
 
-        if (!answers.has("true_intent")) {
+        // Warn only when NONE of the questions we asked came back. The first
+        // version of this checked for "true_intent" specifically, which made the
+        // ranking call — where true_intent is never asked for — log a false alarm
+        // on every single analysis.
+        val noneAnswered = questions.keys().asSequence().none { answers.has(it) }
+        if (noneAnswered) {
             // Key names only — values are never logged, so nothing said in the
             // conversation ends up in logcat. This is the difference between
             // "the model disagreed" and "we could not read its answer", which
             // look identical in the panel.
-            Log.w(TAG, "chat judge answered but true_intent is missing; keys=${JevChat.describeShape(answers)}")
+            Log.w(TAG, "chat judge answered nothing we asked for; keys=${JevChat.describeShape(answers)}")
         }
         return answers
     }
