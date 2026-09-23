@@ -34,6 +34,8 @@ object JevChat {
         appendLine("Output rules:")
         appendLine("- Reply with ONE JSON object and nothing else. No prose, no markdown fences.")
         appendLine("- Shape: {\"answers\": {\"<question_id>\": <answer>, ...}}")
+        appendLine("- The key of each answer MUST be the question's id, copied exactly from the")
+        appendLine("  line that starts with '==='. Never use a position, number, or paraphrase.")
         appendLine("- A \"choice\" question is answered {\"choice\": \"<key>\", \"confidence\": 0.0-1.0}.")
         appendLine("  The key MUST be copied exactly from that question's allowed keys. Never invent one.")
         appendLine("- A \"noul\" question is answered {\"noul\": 0.0-1.0} (1.0 = clearly yes).")
@@ -45,36 +47,49 @@ object JevChat {
     /**
      * Renders the question set as text, including every allowed key so the model
      * cannot answer with a key we have no meaning for.
+     *
+     * Deliberately **unnumbered**. An earlier version listed the questions as
+     * "1. true_intent", "2. danger_level", … and the model answered with the keys
+     * `1,2,3,4,5,6,7` instead of the ids — a real run reached the API fine and
+     * then produced an empty panel because nothing could be read back out. The id
+     * is the only anchor worth giving it.
      */
     fun questionsBlock(questions: JSONObject): String = buildString {
         appendLine("Questions:")
-        val ids = questions.keys().asSequence().toList()
-        ids.forEachIndexed { i, id ->
-            val q = questions.optJSONObject(id) ?: return@forEachIndexed
+        appendLine()
+        // Sorted, and [orderedIds] sorts the same way: the positional fallback
+        // maps an answer key like "3" onto a position in THIS order, so the two
+        // must agree. Sorting is what makes that safe — JSONObject key order is
+        // not even stable across org.json implementations (Android uses a
+        // LinkedHashMap, the JVM library a HashMap), so relying on it would
+        // silently attach a judgement to the wrong question.
+        questions.keys().asSequence().sorted().forEach { id ->
+            val q = questions.optJSONObject(id) ?: return@forEach
             val type = q.optString("type")
-            appendLine("${i + 1}. $id  (type: $type)")
-            appendLine("   question: ${q.optString("instructions").trim()}")
+            appendLine("=== $id ===")
+            appendLine("type: $type")
+            appendLine("question: ${q.optString("instructions").trim()}")
 
             when (type) {
                 "choice" -> {
-                    appendLine("   allowed keys:")
+                    appendLine("allowed keys (copy one exactly):")
                     val criteria = q.optJSONObject("criteria")
                     criteria?.keys()?.asSequence()?.forEach { key ->
-                        appendLine("     - $key: ${criteria.optString(key).trim()}")
+                        appendLine("  - $key: ${criteria.optString(key).trim()}")
                     }
                 }
                 "score" -> {
-                    appendLine("   scale:")
+                    appendLine("scale:")
                     val levels = q.optJSONArray("criteria") ?: JSONArray()
                     for (n in 0 until levels.length()) {
-                        appendLine("     ${n + 1}: ${levels.optString(n).trim()}")
+                        appendLine("  ${n + 1}: ${levels.optString(n).trim()}")
                     }
                 }
                 "noul" -> {
                     val criteria = q.optJSONObject("criteria")
                     if (criteria != null) {
-                        appendLine("   true  means: ${criteria.optString("true").trim()}")
-                        appendLine("   false means: ${criteria.optString("false").trim()}")
+                        appendLine("true  means: ${criteria.optString("true").trim()}")
+                        appendLine("false means: ${criteria.optString("false").trim()}")
                     }
                 }
             }
@@ -124,11 +139,121 @@ object JevChat {
      * object — a model that omits the wrapper is still usable. Returns null when
      * there is no JSON object to be found, so callers can report a clear error
      * instead of silently judging nothing.
+     *
+     * @param questions the question set that was asked. When supplied, answers
+     *        are normalised (see [normalise]) and positional keys are resolved;
+     *        without it the parsed object is returned as-is.
      */
-    fun parseAnswers(raw: String): JSONObject? {
+    fun parseAnswers(raw: String, questions: JSONObject? = null): JSONObject? {
         val obj = extractJson(raw) ?: return null
-        return obj.optJSONObject("answers") ?: obj
+        val inner = obj.optJSONObject("answers") ?: obj
+        if (questions == null) return inner
+        return normalise(inner, questionTypes(questions), orderedIds(questions))
     }
+
+    /**
+     * Question ids in the order [questionsBlock] presents them. Must stay in
+     * step with that function — the positional fallback depends on it.
+     */
+    fun orderedIds(questions: JSONObject): List<String> =
+        questions.keys().asSequence().sorted().toList()
+
+    /** Question id -> answer type, for [normalise]. */
+    fun questionTypes(questions: JSONObject): Map<String, String> =
+        questions.keys().asSequence().associateWith { id ->
+            questions.optJSONObject(id)?.optString("type").orEmpty()
+        }
+
+    /**
+     * Coerces the shapes a chat model actually returns into the one the parsers
+     * expect.
+     *
+     * The prompt asks for `{"true_intent": {"choice": "…", "confidence": …}}`,
+     * but models flatten it — `{"true_intent": "request_action"}`, or
+     * `{"danger_level": 4}`, or `{"answer": "…"}` instead of `{"choice": "…"}`.
+     * Without this a perfectly good judgement parses to nothing and the panel
+     * shows question marks, which looks like the model failed when it did not.
+     *
+     * Unknown ids are passed through untouched so nothing is silently dropped.
+     */
+    fun normalise(
+        answers: JSONObject,
+        types: Map<String, String>,
+        order: List<String> = emptyList()
+    ): JSONObject {
+        val out = JSONObject()
+        answers.keys().asSequence().forEach { rawKey ->
+            val id = resolveId(rawKey, types, order)
+            val type = types[id].orEmpty()
+            when (val value = answers.opt(rawKey)) {
+                is JSONObject -> out.put(id, coerceObject(value, type))
+                is String -> out.put(id, fromScalar(value, type))
+                is Boolean -> out.put(id, JSONObject().put("noul", if (value) 1.0 else 0.0))
+                is Number -> out.put(id, fromNumber(value.toDouble(), type))
+                else -> if (value != null) out.put(id, value)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Maps a key that is a position rather than an id back onto the question it
+     * stood for.
+     *
+     * Defensive only: the prompt no longer numbers the questions, but a model
+     * that answers `{"3": …}` after all should still be understood rather than
+     * silently discarded. Observed for real — see [questionsBlock].
+     */
+    private fun resolveId(key: String, types: Map<String, String>, order: List<String>): String {
+        if (types.containsKey(key)) return key
+        val n = key.trim().toIntOrNull() ?: return key
+        return order.getOrNull(n - 1) ?: key
+    }
+
+    /** An object answer that used `answer` / `value` instead of `choice` / `score`. */
+    private fun coerceObject(obj: JSONObject, type: String): JSONObject {
+        if (obj.has("choice") || obj.has("score") || obj.has("noul")) return obj
+        val loose = obj.opt("answer")?.takeIf { it != JSONObject.NULL }
+            ?: obj.opt("value")?.takeIf { it != JSONObject.NULL }
+            ?: return obj
+        val confidence = obj.optDouble("confidence", 0.5)
+        return when (loose) {
+            is String -> JSONObject().put("choice", loose.trim()).put("confidence", confidence)
+            is Boolean -> JSONObject().put("noul", if (loose) 1.0 else 0.0)
+            is Number -> if (type == "score") {
+                JSONObject().put("score", loose.toDouble()).put("confidence", confidence)
+            } else {
+                JSONObject().put("noul", loose.toDouble().coerceIn(0.0, 1.0))
+            }
+            else -> obj
+        }
+    }
+
+    private fun fromScalar(text: String, type: String): JSONObject {
+        val trimmed = text.trim()
+        val asNumber = trimmed.toDoubleOrNull()
+        return when {
+            asNumber != null -> fromNumber(asNumber, type)
+            trimmed.equals("true", ignoreCase = true) -> JSONObject().put("noul", 1.0)
+            trimmed.equals("false", ignoreCase = true) -> JSONObject().put("noul", 0.0)
+            // A bare word is a choice; confidence is unknown, so claim nothing.
+            else -> JSONObject().put("choice", trimmed).put("confidence", 0.5)
+        }
+    }
+
+    private fun fromNumber(n: Double, type: String): JSONObject = when (type) {
+        "score" -> JSONObject().put("score", n)
+        // A 0..1 weight for "noul"; anything larger is a score on a bigger scale.
+        "noul" -> JSONObject().put("noul", n.coerceIn(0.0, 1.0))
+        else -> if (n in 0.0..1.0) JSONObject().put("noul", n) else JSONObject().put("score", n)
+    }
+
+    /**
+     * The ids present in [answers], for diagnostic logging. Key names only —
+     * never values, so nothing from the conversation ends up in logcat.
+     */
+    fun describeShape(answers: JSONObject): String =
+        answers.keys().asSequence().sorted().joinToString(",")
 
     /**
      * Finds the first complete JSON object in [raw] and parses it.

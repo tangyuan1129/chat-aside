@@ -138,8 +138,17 @@ class JudgeClient(private val prefs: Prefs) {
         if (content.isBlank()) {
             throw ApiException(Route.JUDGE, null, "聊天模型返回了空内容")
         }
-        return JevChat.parseAnswers(content)
+        val answers = JevChat.parseAnswers(content, questions)
             ?: throw ApiException(Route.JUDGE, null, "模型没有按要求返回 JSON：${content.take(80)}")
+
+        if (!answers.has("true_intent")) {
+            // Key names only — values are never logged, so nothing said in the
+            // conversation ends up in logcat. This is the difference between
+            // "the model disagreed" and "we could not read its answer", which
+            // look identical in the panel.
+            Log.w(TAG, "chat judge answered but true_intent is missing; keys=${JevChat.describeShape(answers)}")
+        }
+        return answers
     }
 
     private fun parseChoice(o: JSONObject?): Choice? {

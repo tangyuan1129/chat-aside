@@ -213,11 +213,194 @@ class JevChatTest {
             }
             ```
         """.trimIndent()
-        val ans = JevChat.parseAnswers(raw)
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
         assertNotNull(ans)
         assertEquals("request_action", ans!!.getJSONObject("true_intent").getString("choice"))
         assertEquals(4, ans.getJSONObject("danger_level").getInt("score"))
         assertEquals(0.9, ans.getJSONObject("should_reply_now").getDouble("noul"), 0.001)
         assertFalse(ans.has("nonexistent"))
+    }
+
+    // --------------------------------------------------- normalisation
+    // Chat models flatten the shape they were asked for. Measured on a real
+    // DeepSeek run: the request succeeded in 957ms but the panel showed "意图=?"
+    // because the answer did not match the nested form. These cases cover the
+    // variants worth accepting rather than failing on.
+
+    private fun judgeQuestions() = JevQuestions.judge()
+
+    @Test
+    fun `a bare string is taken as the choice`() {
+        val raw = """{"answers":{"true_intent":"request_action"}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals("request_action", ans!!.getJSONObject("true_intent").getString("choice"))
+        assertEquals(
+            "confidence is unknown, so it must not claim certainty",
+            0.5,
+            ans.getJSONObject("true_intent").getDouble("confidence"),
+            0.001
+        )
+    }
+
+    @Test
+    fun `a bare number on a score question becomes a score`() {
+        val raw = """{"answers":{"danger_level":4}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals(4, ans!!.getJSONObject("danger_level").getInt("score"))
+    }
+
+    @Test
+    fun `a bare number on a noul question becomes a noul`() {
+        val raw = """{"answers":{"should_reply_now":0.8}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals(0.8, ans!!.getJSONObject("should_reply_now").getDouble("noul"), 0.001)
+    }
+
+    @Test
+    fun `a boolean becomes a noul`() {
+        val raw = """{"answers":{"tension_resolved":false}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals(0.0, ans!!.getJSONObject("tension_resolved").getDouble("noul"), 0.001)
+    }
+
+    @Test
+    fun `noul values are clamped to zero and one`() {
+        val raw = """{"answers":{"should_reply_now":7}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals(1.0, ans!!.getJSONObject("should_reply_now").getDouble("noul"), 0.001)
+    }
+
+    @Test
+    fun `an answer key is accepted in place of choice`() {
+        val raw = """{"answers":{"best_action":{"answer":"apologize","confidence":0.6}}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        val a = ans!!.getJSONObject("best_action")
+        assertEquals("apologize", a.getString("choice"))
+        assertEquals(0.6, a.getDouble("confidence"), 0.001)
+    }
+
+    @Test
+    fun `a value key carrying a number on a score question becomes a score`() {
+        val raw = """{"answers":{"danger_level":{"value":6}}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals(6, ans!!.getJSONObject("danger_level").getInt("score"))
+    }
+
+    @Test
+    fun `a canonical answer is passed through untouched`() {
+        val raw = """{"answers":{"true_intent":{"choice":"casual_chat","confidence":0.9,"probabilities":{"casual_chat":0.9}}}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals(
+            0.9,
+            ans!!.getJSONObject("true_intent").getJSONObject("probabilities").getDouble("casual_chat"),
+            0.001
+        )
+    }
+
+    @Test
+    fun `an unrecognised key survives normalisation instead of being dropped`() {
+        val raw = """{"answers":{"true_intent":"casual_chat","some_extra":"keep me"}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertTrue("unknown fields must not vanish", ans!!.has("some_extra"))
+    }
+
+    @Test
+    fun `without types the answer is returned as parsed`() {
+        val raw = """{"answers":{"true_intent":"request_action"}}"""
+        val ans = JevChat.parseAnswers(raw)
+        assertNotNull(ans)
+        // Not normalised, so this is still a string — documents the default.
+        assertEquals("request_action", ans!!.getString("true_intent"))
+    }
+
+    @Test
+    fun `the diagnostic shape lists key names only`() {
+        val ans = JSONObject("""{"true_intent":{"choice":"x"},"danger_level":{"score":3}}""")
+        assertEquals("danger_level,true_intent", JevChat.describeShape(ans))
+    }
+
+    @Test
+    fun `question types are derived from the questions asked`() {
+        val types = JevChat.questionTypes(judgeQuestions())
+        assertEquals("choice", types["true_intent"])
+        assertEquals("score", types["danger_level"])
+        assertEquals("noul", types["tension_resolved"])
+    }
+
+    // ------------------------------------------- regression: the numbering bug
+    // The first version of the prompt listed the questions as "1. true_intent",
+    // "2. danger_level", … A real DeepSeek run then answered with the keys
+    // `1,2,3,4,5,6,7`: the request succeeded in 957ms and the panel still showed
+    // "意图=?" because none of it could be read back. The numbering was the cause.
+
+    @Test
+    fun `the prompt does not number the questions`() {
+        val block = JevChat.questionsBlock(judgeQuestions())
+        assertFalse(
+            "numbering makes the model key its answers by position",
+            block.contains("1. true_intent")
+        )
+        assertFalse("no leading ordinals at all", Regex("(?m)^\\s*\\d+\\. ").containsMatchIn(block))
+        assertTrue("the id must be the visible anchor", block.contains("=== true_intent ==="))
+    }
+
+    @Test
+    fun `the prompt never numbers the ranking question either`() {
+        val q = JSONObject().put(
+            "best_reply",
+            JevQuestions.rankQuestion(listOf("a", "b", "c")).getJSONObject("best_reply")
+        )
+        val block = JevChat.questionsBlock(q)
+        assertFalse(Regex("(?m)^\\s*\\d+\\. ").containsMatchIn(block))
+        assertTrue(block.contains("=== best_reply ==="))
+    }
+
+    @Test
+    fun `the prompt presents the questions in a deterministic order`() {
+        // The positional fallback maps an answer key like "3" onto a position in
+        // the prompt, so that order has to be stable across runs AND platforms.
+        assertEquals(
+            listOf(
+                "best_action", "danger_level", "literal_question",
+                "she_needs", "should_reply_now", "tension_resolved", "true_intent"
+            ),
+            JevChat.orderedIds(judgeQuestions())
+        )
+    }
+
+    @Test
+    fun `a positional key is mapped back onto its question`() {
+        // What the real run returned: answers keyed "1".."7". In the prompt's
+        // order true_intent is the seventh question.
+        val raw = """{"answers":{"7":"request_action"}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals("request_action", ans!!.getJSONObject("true_intent").getString("choice"))
+    }
+
+    @Test
+    fun `a positional key on a score question keeps the score type`() {
+        // Position 2 is danger_level, a score question.
+        val raw = """{"answers":{"2":4}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertEquals(4, ans!!.getJSONObject("danger_level").getInt("score"))
+    }
+
+    @Test
+    fun `a positional key out of range is left alone rather than misassigned`() {
+        val raw = """{"answers":{"99":"mystery"}}"""
+        val ans = JevChat.parseAnswers(raw, judgeQuestions())
+        assertNotNull(ans)
+        assertTrue("an unknown position must not be guessed onto a question", ans!!.has("99"))
     }
 }
