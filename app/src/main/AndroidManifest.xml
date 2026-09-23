@@ -13,6 +13,8 @@
       "stop the OS killing us" that works everywhere.
     -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Re-arm the accessibility watchdog after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="false"
@@ -58,6 +60,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keep the accessibility reader alive on aggressive OEM power management" />
         </service>
+
+        <!-- After a reboot, re-arm the watchdog even if the user never opens the app. -->
+        <receiver
+            android:name=".capture.BootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

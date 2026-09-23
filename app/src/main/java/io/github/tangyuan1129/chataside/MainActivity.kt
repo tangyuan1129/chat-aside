@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import io.github.tangyuan1129.chataside.capture.KeepAliveService
 import io.github.tangyuan1129.chataside.core.PowerHints
 import io.github.tangyuan1129.chataside.core.Prefs
 import kotlin.math.roundToInt
@@ -125,6 +126,17 @@ class MainActivity : AppCompatActivity() {
         container.addView(actionRow("设置", "密钥 · 模型 · 关系 · 透明度 · 会话白名单") {
             startActivity(Intent(this, SettingsActivity::class.java))
         })
+
+        // Arm the accessibility watchdog from here as well as from the capture
+        // service. Starting it only there was a bootstrapping bug: the capture
+        // service is stopped exactly when the watchdog is most needed, so nothing
+        // was running to raise the alert — the user just saw an app that had gone
+        // quiet. Found by opening the app with accessibility switched off and
+        // watching nothing happen.
+        //
+        // Gated on the master switch so we stay silent when the user has
+        // deliberately turned the assistant off.
+        if (prefs.enabled) runCatching { KeepAliveService.start(this) }
 
         // Master toggle
         val toggle = bigToggle(prefs.enabled)
