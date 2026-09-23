@@ -6,6 +6,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      Standard API for joining the battery-optimisation allowlist. Unlike the
+      vendor auto-start screens (which differ per ROM and cannot be opened by an
+      intent), this one exists on every Android 6+ device, so it is the part of
+      "stop the OS killing us" that works everywhere.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="false"

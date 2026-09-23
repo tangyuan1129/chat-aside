@@ -1,5 +1,6 @@
 package io.github.tangyuan1129.chataside
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -15,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import io.github.tangyuan1129.chataside.core.PowerHints
 import io.github.tangyuan1129.chataside.core.Prefs
 import kotlin.math.roundToInt
 
@@ -85,10 +87,37 @@ class MainActivity : AppCompatActivity() {
         container.addView(permCard("悬浮窗权限", "在聊天窗口上方显示分析卡片", overlay) {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         })
-        container.addView(permCard("自启动 + 省电无限制", "小米/HyperOS 必做，否则服务被冻结、读不到消息", null) {
+        // Standard Android API, so unlike the per-vendor auto-start screens this
+        // row means something on every device. It is what actually reduces the
+        // chance of the OS killing us in the first place.
+        val powerOk = (getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)
+            ?.isIgnoringBatteryOptimizations(packageName) == true
+        container.addView(permCard(
+            "省电优化白名单",
+            "把旁白排除在电池优化之外，系统就不那么容易在后台杀掉它",
+            powerOk
+        ) {
+            runCatching {
+                startActivity(Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")
+                ))
+            }
+        })
+        // Vendor-specific: the path differs per ROM, and the upstream text named
+        // Xiaomi/HyperOS only — on any other phone that is instructions for a
+        // screen the user does not have.
+        container.addView(permCard(
+            "自启动 + 省电无限制",
+            PowerHints.hint(android.os.Build.MANUFACTURER, android.os.Build.BRAND),
+            null
+        ) {
             runCatching {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
+        })
+        container.addView(text(PowerHints.consequence(), 12f, sub).apply {
+            setPadding(dp(4), 0, dp(4), dp(10))
         })
 
         // Actions
