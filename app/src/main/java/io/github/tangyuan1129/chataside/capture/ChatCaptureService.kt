@@ -666,7 +666,7 @@ open class ChatCaptureService : AccessibilityService() {
             val label = node.text?.toString() ?: node.contentDescription?.toString() ?: ""
             val b = Rect(); node.getBoundsInScreen(b)
             val candidate = SendButtonRules.Candidate(label, b.left, b.top, b.right, b.bottom)
-            if (!SendButtonRules.isEligible(candidate, screen)) continue
+            if (!SendButtonRules.isEligible(candidate, screen, input)) continue
             // The label is usually a TextView inside the clickable button; walk
             // up a little to find what actually handles the tap.
             var target: AccessibilityNodeInfo = node

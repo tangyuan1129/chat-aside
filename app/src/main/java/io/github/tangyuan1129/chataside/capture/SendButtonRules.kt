@@ -57,16 +57,39 @@ internal object SendButtonRules {
      * Whether a node may be considered at all.
      *
      * Order matters: money is checked first, so a payment control can never
-     * reach the label test. Then the exact label, then sane bounds, then the
-     * bottom half of the screen — every adapted app puts its input row there,
-     * and nothing above the chat area is ever a send button.
+     * reach the label test. Then the exact label, then sane bounds, then where
+     * the node sits.
+     *
+     * **Position, when the input box is known**: the defining property of a send
+     * button is that it shares the input box's row — not that it is in the
+     * bottom half of the display. Measured on a real device (WeChat, 1264x2780):
+     * with the soft keyboard up, the whole composer collapses into the upper
+     * ~1700px, putting the send button at 59% of screen height. A "bottom half"
+     * test passes there with only 240px to spare, and would reject the real
+     * button outright on a shorter screen or a taller keyboard — a silent
+     * failure, since nothing would be found to press.
+     *
+     * So: overlap the input row (within one row-height of slack, for layouts
+     * that hang the button just under the box) and sit to the right of it. Only
+     * when no editable node was found at all do we fall back to the screen-half
+     * heuristic, which is all that is left to go on.
      */
-    fun isEligible(c: Candidate, screen: Screen): Boolean {
+    fun isEligible(c: Candidate, screen: Screen, input: InputBox? = null): Boolean {
         val label = c.label.trim()
         if (label.isEmpty()) return false
         if (isMoneyLabel(label)) return false
         if (!hasSendLabel(label)) return false
         if (c.width <= 0 || c.height <= 0) return false
+
+        if (input != null) {
+            val slack = input.bottom - input.top
+            val insideRow = c.centerY >= input.top - slack && c.centerY <= input.bottom + slack
+            if (!insideRow) return false
+            // Never to the left of the input box.
+            if (c.right <= input.left) return false
+            return true
+        }
+
         if (c.centerY < screen.height / 2) return false
         return true
     }

@@ -165,4 +165,88 @@ class SendButtonRulesTest {
         assertEquals(40, c.height)
         assertEquals(40, c.centerY)
     }
+
+    // ------------------------------------------------ measured on real hardware
+    // Captured from WeChat on a realme GT Neo6 (1264x2780) with uiautomator,
+    // after typing into the composer so the send button was actually present.
+    // This is the layout findSendButton really meets, and it is where the
+    // screen-half heuristic turned out to be the wrong test.
+
+    private val realScreen = Screen(width = 1264, height = 2780)
+    private val realInput = InputBox(left = 151, top = 1562, right = 917, bottom = 1700)
+    private val realSend = Candidate("发送", left = 1074, top = 1562, right = 1232, bottom = 1701)
+
+    @Test
+    fun `the real send button is eligible`() {
+        assertTrue(SendButtonRules.isEligible(realSend, realScreen, realInput))
+    }
+
+    @Test
+    fun `the real send button outranks a full-width container on the same row`() {
+        val button = SendButtonRules.score(realSend, realInput, realScreen)
+        val container = SendButtonRules.score(
+            Candidate("发送", left = 151, top = 1562, right = 917, bottom = 1700),
+            realInput, realScreen
+        )
+        assertTrue("button=$button should beat container=$container", button > container)
+    }
+
+    @Test
+    fun `the real send button has only a thin margin under the old screen-half test`() {
+        // Documents why the rule changed: 1631 vs a 1390 threshold. It passes
+        // here, but a taller keyboard or shorter screen would push the real
+        // button above the midpoint and the old test would have rejected it.
+        val threshold = realScreen.height / 2
+        assertTrue(realSend.centerY > threshold)
+        assertTrue("margin should be under 20% of screen height", realSend.centerY - threshold < realScreen.height / 5)
+    }
+
+    @Test
+    fun `a keyboard-compressed composer is accepted by the row rule but rejected without it`() {
+        // Same button, pushed above the screen midpoint by a taller keyboard.
+        val compressed = Candidate("发送", left = 1074, top = 1100, right = 1232, bottom = 1240)
+        val compressedRow = InputBox(left = 151, top = 1100, right = 917, bottom = 1240)
+
+        assertFalse(
+            "without the input box the fallback still rejects it",
+            SendButtonRules.isEligible(compressed, realScreen)
+        )
+        assertTrue(
+            "knowing the input row must make it eligible",
+            SendButtonRules.isEligible(compressed, realScreen, compressedRow)
+        )
+    }
+
+    @Test
+    fun `a send-looking node on a different row is refused when the input box is known`() {
+        // e.g. a share sheet's own 发送, far above the composer.
+        val elsewhere = Candidate("发送", left = 900, top = 300, right = 1100, bottom = 400)
+        assertFalse(SendButtonRules.isEligible(elsewhere, realScreen, realInput))
+    }
+
+    @Test
+    fun `a node in the input row but to the left of the box is refused`() {
+        val leftOfBox = Candidate("发送", left = 10, top = 1562, right = 140, bottom = 1700)
+        assertFalse(SendButtonRules.isEligible(leftOfBox, realScreen, realInput))
+    }
+
+    @Test
+    fun `a money label on the input row is still refused`() {
+        val redPacket = Candidate("发送红包", left = 1074, top = 1562, right = 1232, bottom = 1701)
+        assertFalse(SendButtonRules.isEligible(redPacket, realScreen, realInput))
+    }
+
+    @Test
+    fun `a button hanging just below the input box is still accepted`() {
+        // Allows for layouts that place send under the composer rather than
+        // beside it: within one row-height of slack.
+        val justBelow = Candidate("发送", left = 1074, top = 1700, right = 1232, bottom = 1830)
+        assertTrue(SendButtonRules.isEligible(justBelow, realScreen, realInput))
+    }
+
+    @Test
+    fun `far below the composer is refused`() {
+        val toolbar = Candidate("发送", left = 300, top = 2200, right = 500, bottom = 2300)
+        assertFalse(SendButtonRules.isEligible(toolbar, realScreen, realInput))
+    }
 }
