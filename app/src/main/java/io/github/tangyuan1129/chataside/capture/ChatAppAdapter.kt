@@ -563,10 +563,14 @@ class DouyinAdapter(override val pkg: String) : ChatAppAdapter {
                     text !in DOUYIN_UI_WORDS
                 ) {
                     val b = Rect(); node.getBoundsInScreen(b)
-                    // Drop the action-bar / tab text up top, and tiny narrow
-                    // labels (buttons) — a bubble is a fairly wide block.
+                    // Drop the action-bar / tab text up top, and the input bar /
+                    // send area at the bottom. A message bubble is a text block at
+                    // least ~12% of the screen wide; the old 35% floor wrongly
+                    // dropped short bubbles, which is why single-conversation
+                    // DMs showed nothing.
                     if (b.top < actionBarMax) continue
-                    if (b.width() < width * 0.35f) continue
+                    if (b.bottom > height * 0.9f) continue
+                    if (b.width() < width * 0.12f) continue
                     val isMe = (b.centerX().toFloat() / width) > 0.5f
                     if (isMe) rightCount++ else leftCount++
                     rows.add(Row(b.top, if (isMe) "me" else "other", text))
@@ -575,11 +579,16 @@ class DouyinAdapter(override val pkg: String) : ChatAppAdapter {
             }
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
         }
-        // Not a chat window → let the service do nothing (or fall back to manual
-        // OCR via the bubble menu).
-        if (!hasInput || !hasScroll) return null
-        // Single-column screens (comment lists) have bubbles on only one side.
-        if (leftCount == 0 || rightCount == 0) return null
+        val totalRows = leftCount + rightCount
+        // A private-message window needs an input box. Beyond that, accept either
+        // a scrollable two-sided chat, or any screen with an input and >=4 message
+        // rows (covers Douyin's custom list class and one-sided threads — the row
+        // floor stops single-row UI from qualifying). NOTE: the >=4 fallback can
+        // still misfire on a video's comment list; the exact signals need a live
+        // node dump to tighten.
+        if (!hasInput) return null
+        val looksLikeChat = (hasScroll && leftCount > 0 && rightCount > 0) || totalRows >= 4
+        if (!looksLikeChat) return null
 
         val title = findTitleInActionBar(root, firstRowTop, width, res, 0.2, 0.8)
         // In a chat window but no text read → empty snapshot (OCR fallback cue).
