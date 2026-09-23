@@ -58,6 +58,11 @@ open class ChatCaptureService : AccessibilityService() {
 
     private var lastSignature: String = ""
     private var activePkg: String? = null
+    /** Identity of the conversation whose judgment is currently on screen:
+     *  package + (stabilized) title. Used to decide between "wipe the old
+     *  judgment" (different conversation) and "keep it" (new message in the
+     *  same chat). See maybeCapture(). */
+    private var activeConvKey: String? = null
     private var analyzing = false
 
     /** Last known-good (non-transient) title per package. See [isTransientTitle]:
@@ -200,22 +205,36 @@ open class ChatCaptureService : AccessibilityService() {
             return
         }
 
-        // Switching to another adapted app resets the dedupe signature, so two apps
-        // whose last few messages happen to match cannot swallow each other.
+        // Track the active package for adapter lookup; switching app also forces a
+        // re-evaluation of the dedupe signature.
         if (pkg != activePkg) { activePkg = pkg; lastSignature = "" }
 
         currentSnapshot = snapshot
         val sig = snapshot.signature()
         val showing = overlay?.isShowing() == true
+
+        // Conversation identity = package + (stabilized) title. A *different*
+        // conversation must wipe the previous judgment so it cannot leak across
+        // chats. A *new message in the same* conversation must NOT — otherwise the
+        // result blinks back to the "分析当前对话" button on every content change.
+        // That blink is the "分析出来后页面经常消失" bug: any incoming message,
+        // "对方正在输入", a read receipt, or a scroll flips the signature, and the
+        // old code treated it as a brand-new conversation and wiped the panel.
+        val convKey = "$pkg:${snapshot.title}"
+        if (convKey != activeConvKey) {
+            activeConvKey = convKey
+            lastSignature = ""          // re-evaluate this chat from scratch
+            main.post { overlay?.resetForNewConversation() }
+        }
+
         // Same content and the bubble is already up → nothing to do.
         if (sig == lastSignature && showing) return
         // Same content but the bubble is gone (killed by MIUI, or we left and came
         // back) → just put the bubble back, do NOT re-analyze (saves tokens/time).
         if (sig == lastSignature && !showing) { main.post { overlay?.showIdle(snapshot.title) }; return }
-        // Anything else reaching here is a genuinely different conversation (new
-        // app, or new content in this one) — a leftover judgment/candidates from
-        // whatever was shown before must not leak into it.
-        main.post { overlay?.resetForNewConversation() }
+        // Content changed within the SAME conversation: keep the previous judgment
+        // on screen and re-evaluate. The loading/result states below replace it
+        // without ever flashing the idle "分析当前对话" button.
         lastSignature = sig
         Log.d(TAG, "snapshot[$pkg] title=${snapshot.title} n=${snapshot.messages.size} " +
             snapshot.messages.takeLast(6).joinToString(" | ") { "${it.side}:${it.text.length}" }) // sides + lengths only, never content
@@ -481,9 +500,15 @@ open class ChatCaptureService : AccessibilityService() {
             if (overlay?.isShowing() != true) overlay?.showIdle(snapshot.title)
             return
         }
-        // Same rule as the tree path: past this point the conversation is either
-        // new or being force-refreshed, so drop whatever was shown before.
-        overlay?.resetForNewConversation()
+        // Only wipe when we've actually moved to a different conversation; a new
+        // message in the same chat must keep the previous judgment (same bug as
+        // the tree path — otherwise the result blinks back to the idle button).
+        val convKey = "$pkg:${snapshot.title}"
+        if (convKey != activeConvKey) {
+            activeConvKey = convKey
+            lastSignature = ""
+            overlay?.resetForNewConversation()
+        }
         lastSignature = sig
 
         val auto = prefs.ocrAutoAnalyze && prefs.autoAnalyze && snapshot.latestFrom == "other"
