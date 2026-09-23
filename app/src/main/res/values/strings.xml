@@ -1,4 +1,7 @@
 <resources>
-    <string name="app_name">Jev助手</string>
-    <string name="a11y_desc_disguised">读取当前聊天窗口文字，用于生成回复建议。不会自动发送消息。</string>
+    <string name="app_name">旁白</string>
+    <!-- 这段文字会显示在系统的无障碍服务列表里，必须如实描述能力边界。
+         上游原文是「不会自动发送消息」，但本 fork 的选项模式增加了「连点两下发送」，
+         继续沿用会让用户在开启权限时被误导。 -->
+    <string name="a11y_desc_disguised">读取当前聊天窗口文字，用于给出判断与回复选项。默认只把文字填进输入框、不发送；只有你在选项模式里连点同一选项两下时才会发送，该功能可在设置中关闭。</string>
 </resources>

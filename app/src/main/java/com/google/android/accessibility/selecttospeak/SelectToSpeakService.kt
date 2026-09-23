@@ -1,6 +1,6 @@
 package com.google.android.accessibility.selecttospeak
 
-import com.jev.probe.capture.ChatCaptureService
+import io.github.tangyuan1129.chataside.capture.ChatCaptureService
 
 /**
  * The live capture service, registered under this system-style class name so
