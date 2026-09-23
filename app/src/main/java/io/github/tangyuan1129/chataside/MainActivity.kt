@@ -1,11 +1,14 @@
 package io.github.tangyuan1129.chataside
 
 import android.content.Context
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.TypedValue
@@ -26,6 +29,9 @@ import kotlin.math.roundToInt
  * guided permission checklist (each row reflects its real granted state), a
  * prominent on/off switch, and a link to settings.
  */
+/** Request code for the notification permission; nothing depends on the value. */
+private const val REQ_NOTIFICATIONS = 1001
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var prefs: Prefs
@@ -126,6 +132,18 @@ class MainActivity : AppCompatActivity() {
         container.addView(actionRow("设置", "密钥 · 模型 · 关系 · 透明度 · 会话白名单") {
             startActivity(Intent(this, SettingsActivity::class.java))
         })
+
+        // Notifications are a runtime permission from Android 13 onward. It was
+        // declared in the manifest but never actually requested, so on any
+        // modern device `NotificationManager.notify()` throws and — because the
+        // watchdog wraps it in runCatching — the "accessibility has been switched
+        // off" alert was swallowed without a trace. Found by watching the alert
+        // never appear on a real phone even with the watchdog running.
+        if (prefs.enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
+        }
 
         // Arm the accessibility watchdog from here as well as from the capture
         // service. Starting it only there was a bootstrapping bug: the capture
