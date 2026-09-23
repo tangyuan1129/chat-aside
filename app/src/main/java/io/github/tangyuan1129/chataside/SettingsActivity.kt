@@ -7,7 +7,9 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -15,7 +17,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.HorizontalScrollView
+import android.widget.ArrayAdapter
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
@@ -27,6 +31,7 @@ import io.github.tangyuan1129.chataside.core.Prefs
 import io.github.tangyuan1129.chataside.core.kb.KbSelfCheck
 import io.github.tangyuan1129.chataside.core.kb.KbStore
 import io.github.tangyuan1129.chataside.jev.JudgeClient
+import io.github.tangyuan1129.chataside.jev.ModelCatalog
 import io.github.tangyuan1129.chataside.jev.ReplyClient
 import io.github.tangyuan1129.chataside.jev.VisionClient
 import java.util.concurrent.Executors
@@ -139,6 +144,28 @@ class SettingsActivity : AppCompatActivity() {
         // =================== 接口 ===================
         root.addView(section("接口"))
 
+        // Asks the endpoint which models it actually offers, then lets the user
+        // pick one. Best-effort on purpose: plenty of providers have no /models,
+        // so a failure says so and leaves the model box editable by hand rather
+        // than blocking configuration.
+        fun detectModels(baseUrl: String, key: String, result: TextView, apply: (String) -> Unit) {
+            if (key.isBlank()) { result.text = "请先填密钥，检测要用到它"; return }
+            result.text = "检测模型中…"
+            worker.execute {
+                val models = try {
+                    ModelCatalog.fetch(baseUrl, key)
+                } catch (e: Exception) {
+                    val msg = e.message ?: e.javaClass.simpleName
+                    main.post { result.text = "检测失败：$msg（仍可手动填模型名）" }
+                    return@execute
+                }
+                main.post {
+                    result.text = "检测到 ${models.size} 个模型"
+                    showModelPicker(models, apply)
+                }
+            }
+        }
+
         // --- 判断接口（Jev） ---
         val judgeCard = card()
         judgeCard.addView(cardTitle("判断接口（Jev）"))
@@ -178,6 +205,14 @@ class SettingsActivity : AppCompatActivity() {
         judgeCard.addView(label("模型"))
         judgeCard.addView(judgeModelEdit)
         val judgeResult = resultText()
+        judgeCard.addView(cardBtn("检测可用模型") {
+            val base = judgeBaseEdit.text.toString().trim()
+            detectModels(
+                baseUrl = base.ifBlank { defaultJudgeBase(resolveJudgeProvider(judgeProviderIdx, base)) },
+                key = judgeKeyEdit.text.toString().trim(),
+                result = judgeResult
+            ) { judgeModelEdit.setText(it) }
+        })
         judgeCard.addView(cardBtn("测试判断") {
             val base = judgeBaseEdit.text.toString().trim()
             val key = judgeKeyEdit.text.toString().trim()
@@ -245,6 +280,17 @@ class SettingsActivity : AppCompatActivity() {
         replyCard.addView(label("模型"))
         replyCard.addView(replyModelEdit)
         val replyResult = resultText()
+        replyCard.addView(cardBtn("检测可用模型") {
+            detectModels(
+                baseUrl = replyBaseEdit.text.toString().trim().ifBlank { Prefs.DEFAULT_REPLY_BASE },
+                // Blank reply key means "reuse the judge key" everywhere else, so
+                // detection has to look there too or it would refuse to run.
+                key = replyKeyEdit.text.toString().trim().ifBlank {
+                    judgeKeyEdit.text.toString().trim()
+                },
+                result = replyResult
+            ) { replyModelEdit.setText(it) }
+        })
         replyCard.addView(cardBtn("测试回复") {
             val base = replyBaseEdit.text.toString().trim()
             val model = replyModelEdit.text.toString().trim()
@@ -722,6 +768,62 @@ class SettingsActivity : AppCompatActivity() {
                 android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
         }.isSuccess
         if (!ok) Toast.makeText(this, "打不开链接：$url", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Searchable list of detected model ids.
+     *
+     * OpenRouter alone offers several hundred, so a plain list would be unusable —
+     * the filter box narrows it as you type. Picking a row writes it into the
+     * model box; dismissing changes nothing.
+     */
+    private fun showModelPicker(models: List<String>, onPick: (String) -> Unit) {
+        val filter = EditText(this).apply {
+            hint = "筛选：输入几个字母，例如 deepseek"
+            textSize = 14f
+            setTextColor(ink)
+            setHintTextColor(Color.parseColor("#9CA3AF"))
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+        }
+        val list = ListView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(360))
+        }
+        val shown = ArrayList(models)
+        val adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, shown)
+        list.adapter = adapter
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(filter)
+            addView(list)
+        }
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("检测到 ${models.size} 个模型，点一个填入")
+            .setView(box)
+            .setNegativeButton("取消", null)
+            .create()
+
+        filter.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                val q = s?.toString()?.trim()?.lowercase().orEmpty()
+                shown.clear()
+                shown.addAll(
+                    if (q.isEmpty()) models else models.filter { it.lowercase().contains(q) }
+                )
+                adapter.notifyDataSetChanged()
+            }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+
+        list.setOnItemClickListener { _, _, position, _ ->
+            shown.getOrNull(position)?.let {
+                onPick(it)
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
     }
 
     override fun onDestroy() { super.onDestroy(); worker.shutdownNow() }

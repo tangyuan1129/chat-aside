@@ -83,4 +83,7 @@ dependencies {
     // user if they are wrong: which node counts as the send button, and when a
     // second tap really sends. Both are pure functions, so no device is needed.
     testImplementation("junit:junit:4.13.2")
+    // android.jar ships org.json as throw-only stubs, so a JVM test that parses
+    // JSON needs the real implementation on the classpath.
+    testImplementation("org.json:json:20240303")
 }

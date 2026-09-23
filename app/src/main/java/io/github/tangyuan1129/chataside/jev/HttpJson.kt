@@ -15,6 +15,9 @@ object Route {
     const val JUDGE = "判断接口"
     const val REPLY = "回复接口"
     const val VISION = "视觉接口"
+
+    /** Model detection hits a different endpoint than analysis; say so in errors. */
+    const val MODELS = "模型列表"
 }
 
 /**
@@ -111,6 +114,47 @@ object HttpJson {
         return try {
             BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
         } catch (_: Exception) { "" }
+    }
+
+    /**
+     * GET returning parsed JSON, used by model detection.
+     *
+     * Deliberately no retry loop: this runs while the user waits on a button, and
+     * a provider that is going to 401 or 404 will do so immediately. Failures are
+     * shaped exactly like [post]'s so the settings page can print one style of
+     * message for both.
+     */
+    fun get(
+        url: String,
+        key: String,
+        route: String,
+        extraHeaders: Map<String, String> = emptyMap()
+    ): JSONObject {
+        var conn: HttpURLConnection? = null
+        try {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 15000
+                readTimeout = 30000
+                setRequestProperty("Authorization", "Bearer $key")
+                setRequestProperty("Accept", "application/json")
+                extraHeaders.forEach { (k, v) -> setRequestProperty(k, v) }
+            }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val errText = readBody(conn.errorStream)
+                throw ApiException(route, code, errText.ifBlank { "（响应体为空）" })
+            }
+            val text = readBody(conn.inputStream)
+            if (text.isBlank()) throw ApiException(route, code, "响应体为空")
+            return JSONObject(text)
+        } catch (e: ApiException) {
+            throw e
+        } catch (e: Exception) {
+            throw ApiException(route, null, describe(e))
+        } finally {
+            conn?.disconnect()
+        }
     }
 
     /** OpenRouter wants attribution headers; other hosts reject unknown ones politely. */
