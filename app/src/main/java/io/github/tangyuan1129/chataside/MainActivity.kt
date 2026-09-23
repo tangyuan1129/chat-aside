@@ -62,8 +62,11 @@ class MainActivity : AppCompatActivity() {
     private fun build() {
         container.removeAllViews()
 
-        container.addView(text("Jev 聊天助手", 24f, ink, bold = true))
-        container.addView(text("在聊天 App 旁读对方消息（已支持微信、QQ、X、飞书），给出判断和候选回复。发送始终由你手动点。",
+        container.addView(text("旁白", 24f, ink, bold = true))
+        container.addView(text(
+            "在聊天 App 旁读对方消息（已支持微信、QQ、X、飞书），给你两种看法：" +
+                "选项模式挑一句话说，参谋模式只看局面、回复自己写。" +
+                "默认只填进输入框不发送；只有你开启后在选项模式里连点两下，才会真的发出去。",
             13f, sub).apply { setPadding(0, dp(6), 0, dp(16)) })
 
         val a11y = isA11yEnabled()

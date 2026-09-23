@@ -8,9 +8,9 @@ plugins {
 
 // Release signing: reads a properties file kept OUTSIDE the repo
 // (storeFile / storePassword / keyAlias / keyPassword). Override the path with
-// the JEV_KEYSTORE_PROPS env var. Without it, release builds are unsigned.
+// the ASIDE_KEYSTORE_PROPS env var. Without it, release builds are unsigned.
 val releaseProps = Properties().apply {
-    val f = file(System.getenv("JEV_KEYSTORE_PROPS") ?: "H:/android/keys/jev-release.properties")
+    val f = file(System.getenv("ASIDE_KEYSTORE_PROPS") ?: "keystore.properties")
     if (f.exists()) FileInputStream(f).use { load(it) }
 }
 
@@ -78,4 +78,9 @@ dependencies {
     // On-device OCR. The *bundled* Chinese model (not the play-services variant):
     // it works on phones with no Google Play services and needs no model download.
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+
+    // JVM unit tests cover the two pieces of logic that can actually hurt the
+    // user if they are wrong: which node counts as the send button, and when a
+    // second tap really sends. Both are pure functions, so no device is needed.
+    testImplementation("junit:junit:4.13.2")
 }

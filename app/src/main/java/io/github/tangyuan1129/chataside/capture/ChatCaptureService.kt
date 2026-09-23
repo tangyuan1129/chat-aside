@@ -636,19 +636,24 @@ open class ChatCaptureService : AccessibilityService() {
      * ids differ per app and change per release, but every one of them labels
      * the button 发送 / Send.
      *
-     * Candidates must be in the bottom half (input rows live there) and, when
-     * the input box is visible, sit on its row and to its right — the layout
-     * all four adapted apps share. A node whose label mentions money is
-     * discarded before anything else is considered, so no mislabelled payment
-     * control can ever be pressed by this path.
+     * Only the tree walk lives here; every decision about what may be pressed is
+     * in [SendButtonRules], which is pure and unit-tested. A node whose label
+     * mentions money is discarded before anything else is considered, so no
+     * mislabelled payment control can be pressed by this path.
      */
     private fun findSendButton(
         root: AccessibilityNodeInfo,
         edit: AccessibilityNodeInfo?
     ): AccessibilityNodeInfo? {
-        val w = resources.displayMetrics.widthPixels
-        val h = resources.displayMetrics.heightPixels
+        val screen = SendButtonRules.Screen(
+            resources.displayMetrics.widthPixels,
+            resources.displayMetrics.heightPixels
+        )
         val editRect = Rect().also { edit?.getBoundsInScreen(it) }
+        val input = if (edit != null) {
+            SendButtonRules.InputBox(editRect.left, editRect.top, editRect.right, editRect.bottom)
+        } else null
+
         val stack = ArrayDeque<AccessibilityNodeInfo>()
         stack.addLast(root)
         var guard = 0
@@ -658,13 +663,10 @@ open class ChatCaptureService : AccessibilityService() {
             guard++
             val node = stack.removeLast()
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
-            val label = (node.text?.toString() ?: node.contentDescription?.toString() ?: "").trim()
-            if (label.isEmpty()) continue
-            if (MONEY_WORDS.any { label.contains(it) }) continue
-            if (label !in SEND_WORDS) continue
+            val label = node.text?.toString() ?: node.contentDescription?.toString() ?: ""
             val b = Rect(); node.getBoundsInScreen(b)
-            if (b.width() <= 0 || b.height() <= 0) continue
-            if (b.centerY() < h / 2) continue                 // not the input row
+            val candidate = SendButtonRules.Candidate(label, b.left, b.top, b.right, b.bottom)
+            if (!SendButtonRules.isEligible(candidate, screen)) continue
             // The label is usually a TextView inside the clickable button; walk
             // up a little to find what actually handles the tap.
             var target: AccessibilityNodeInfo = node
@@ -674,12 +676,7 @@ open class ChatCaptureService : AccessibilityService() {
                 up++
             }
             if (!target.isClickable) continue
-            var score = 0
-            if (edit != null) {
-                if (b.top < editRect.bottom && b.bottom > editRect.top) score += 2
-                if (b.left >= editRect.right - w / 20) score += 2
-            }
-            score -= b.width() / 10                              // prefer the small one
+            val score = SendButtonRules.score(candidate, input, screen)
             if (score > bestScore) { bestScore = score; best = target }
         }
         return best
@@ -723,20 +720,8 @@ open class ChatCaptureService : AccessibilityService() {
         )
 
         /**
-         * The only labels [findSendButton] will press. Exact matches, not
-         * substrings: "发送给朋友" / "Send to" style labels belong to share
-         * sheets, and entering one of those by accident would be far worse than
-         * failing to find the button.
+         * Send-button labels and the money-surface blocklist now live in
+         * [SendButtonRules], where they are covered by unit tests.
          */
-        private val SEND_WORDS = setOf("发送", "Send", "send", "SEND")
-
-        /**
-         * Refused before anything else is considered. These show up on payment
-         * sheets and red-packet screens, and no amount of label-matching luck
-         * justifies this app being able to press one.
-         */
-        private val MONEY_WORDS = listOf(
-            "转账", "红包", "收款", "支付", "付款", "收钱", "零钱", "理财", "银行卡"
-        )
     }
 }

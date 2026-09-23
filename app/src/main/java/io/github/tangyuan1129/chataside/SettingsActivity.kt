@@ -412,6 +412,41 @@ class SettingsActivity : AppCompatActivity() {
         card3.addView(seek)
         root.addView(card3)
 
+        // =================== 关于 ===================
+        // NOTICE 要求在产品内注明出处，这一节就是履行那条要求；
+        // 顺带把数据流向写在用户看得到的地方，而不是只写在仓库 README 里。
+        root.addView(section("关于"))
+        val aboutCard = card()
+        aboutCard.addView(cardTitle("旁白 · chat-aside"))
+        aboutCard.addView(text("版本 ${appVersion()}", 12f, sub))
+
+        aboutCard.addView(label("数据流向"))
+        aboutCard.addView(text(
+            "聊天内容只在你触发分析的那一刻，发给你在「接口」里自己配置的模型服务。" +
+                "本项目没有自建服务器，不收集、不上报，也不把聊天内容写入磁盘。" +
+                "密钥存在应用私有空间，不进日志。" +
+                "聊天历史默认关闭，开启后也只存在本机，可在「分析」里一键清空。" +
+                "截屏 OCR 使用随包的离线中文模型，图片不外传。",
+            11.5f, sub).apply { setLineSpacing(dp(2).toFloat(), 1f) })
+
+        aboutCard.addView(label("发送行为"))
+        aboutCard.addView(text(
+            "默认只把文字填进输入框，不发送。" +
+                "选项模式下连点同一选项两下才会发送，该功能可在「工作模式」里关闭。",
+            11.5f, sub).apply { setLineSpacing(dp(2).toFloat(), 1f) })
+
+        aboutCard.addView(label("来源与许可"))
+        aboutCard.addView(text(
+            "本项目基于 Jev 聊天助手（Jev Chat Assistant）二次开发，以 MIT 协议开源，" +
+                "并保留上游的 LICENSE 与 NOTICE。" +
+                "本项目不是上游官方版本，与上游作者无隶属或背书关系，" +
+                "也不使用「Jev 聊天助手」名称或相关域名作为自身标识。",
+            11.5f, sub).apply { setLineSpacing(dp(2).toFloat(), 1f) })
+
+        aboutCard.addView(cardBtn("查看上游项目") { openUrl("https://github.com/jev-chat/jev-chat-jarvis") })
+        aboutCard.addView(cardBtn("查看本项目源码") { openUrl("https://github.com/tangyuan1129/chat-aside") })
+        root.addView(aboutCard)
+
         // =================== 保存 ===================
         root.addView(primaryBtn("保存全部设置") {
             // Address wins over the pill: a preset HOST in the box means that
@@ -673,6 +708,20 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun round(radius: Int, color: Int, stroke: Boolean = false) = GradientDrawable().apply {
         cornerRadius = radius.toFloat(); setColor(color); if (stroke) setStroke(dp(1), accent)
+    }
+
+    /** Version name from the manifest, shown in the About card. */
+    private fun appVersion(): String = runCatching {
+        packageManager.getPackageInfo(packageName, 0).versionName
+    }.getOrNull() ?: "未知"
+
+    /** Opening a link is a convenience; it must never take the settings page down. */
+    private fun openUrl(url: String) {
+        val ok = runCatching {
+            startActivity(android.content.Intent(
+                android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+        }.isSuccess
+        if (!ok) Toast.makeText(this, "打不开链接：$url", Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() { super.onDestroy(); worker.shutdownNow() }

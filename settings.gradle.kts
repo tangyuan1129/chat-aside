@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "jev-android"
+rootProject.name = "chat-aside"
 include(":app")

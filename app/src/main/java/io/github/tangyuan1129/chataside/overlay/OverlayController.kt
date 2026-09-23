@@ -73,16 +73,14 @@ class OverlayController(private val ctx: Context) {
     var onSend: ((String) -> Unit)? = null
 
     /**
-     * Double-tap state for chooser mode: which option is currently armed for a
-     * second tap, and the deadline for that tap. Cleared when it fires, when a
-     * different option is tapped, or when the window lapses.
+     * Double-tap state for chooser mode. The rule itself lives in
+     * [DoubleTapGate] so it can be unit-tested; this class only schedules the
+     * expiry and redraws.
      */
-    private var armedIndex = -1
-    private var armedUntil = 0L
+    private val gate = DoubleTapGate()
     private val armer = Handler(Looper.getMainLooper())
     private val disarm = Runnable {
-        if (armedIndex != -1) {
-            armedIndex = -1; armedUntil = 0L
+        if (gate.expire(SystemClock.uptimeMillis())) {
             lastJudgment?.let { render(it, generating = false) }
         }
     }
@@ -158,7 +156,7 @@ class OverlayController(private val ctx: Context) {
             layoutParams = FrameLayout.LayoutParams(dp(52), dp(52))
         }
         val b = TextView(ctx).apply {
-            text = "Jev"
+            text = "旁白"
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             textSize = 13f
@@ -196,7 +194,7 @@ class OverlayController(private val ctx: Context) {
         // Header
         val header = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         header.addView(TextView(ctx).apply {
-            text = "Jev 分析"; setTextColor(Color.parseColor("#111827")); textSize = 15f
+            text = "旁白分析"; setTextColor(Color.parseColor("#111827")); textSize = 15f
             setTypeface(typeface, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
@@ -351,7 +349,7 @@ class OverlayController(private val ctx: Context) {
         replyError = null
         // An armed option must not survive into another conversation: its second
         // tap would send to whoever the chat window now shows.
-        armedIndex = -1; armedUntil = 0L
+        gate.clear()
         armer.removeCallbacks(disarm)
         contentBox?.removeAllViews()
     }
@@ -418,7 +416,7 @@ class OverlayController(private val ctx: Context) {
         val r = root ?: return
         runCatching { wm.removeView(r) }
         armer.removeCallbacks(disarm)
-        armedIndex = -1; armedUntil = 0L
+        gate.clear()
         root = null; bubble = null; panel = null; contentBox = null; dangerDot = null; expanded = false
     }
 
@@ -501,7 +499,7 @@ class OverlayController(private val ctx: Context) {
     /** One option in the chooser strip. The entire row is the tap target. */
     private fun choiceRow(index: Int, r: RankedReply, fill: (String) -> Unit): View {
         val top = index == 0
-        val armed = armedIndex == index
+        val armed = gate.isArmed(index)
         val bg = when {
             armed -> Color.parseColor("#DDE9FF")
             top -> Color.parseColor("#EAF1FF")
@@ -559,13 +557,17 @@ class OverlayController(private val ctx: Context) {
      * plain v1.3 fill-then-collapse.
      */
     private fun tapChoice(index: Int, text: String, fill: (String) -> Unit) {
-        val now = SystemClock.uptimeMillis()
-        if (prefs.chooserDoubleTapSend && armedIndex == index && now <= armedUntil) {
-            armedIndex = -1; armedUntil = 0L
+        val shouldSend = gate.onTap(
+            index = index,
+            nowMs = SystemClock.uptimeMillis(),
+            enabled = prefs.chooserDoubleTapSend,
+            windowMs = prefs.chooserDoubleTapWindowMs.toLong()
+        )
+        if (shouldSend) {
             armer.removeCallbacks(disarm)
             val send = onSend
-            if (send != null) { send(text); if (expanded) toggle() }
-            else { fill(text); if (expanded) toggle() }
+            if (send != null) send(text) else fill(text)
+            if (expanded) toggle()
             return
         }
         fill(text)
@@ -573,8 +575,6 @@ class OverlayController(private val ctx: Context) {
             if (expanded) toggle()
             return
         }
-        armedIndex = index
-        armedUntil = now + prefs.chooserDoubleTapWindowMs
         armer.removeCallbacks(disarm)
         armer.postDelayed(disarm, prefs.chooserDoubleTapWindowMs.toLong())
         lastJudgment?.let { render(it, generating = false) }
