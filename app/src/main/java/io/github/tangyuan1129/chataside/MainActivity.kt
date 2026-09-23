@@ -145,6 +145,27 @@ class MainActivity : AppCompatActivity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
         }
 
+        // Battery-optimisation allowlist is the single most effective code-side
+        // lever against OEMs force-stopping us, and the permission card alone is
+        // rarely tapped. Surface it as an auto-prompt — once, when not already
+        // exempt. Gated on the master switch and on notifications already being
+        // granted, so the two system dialogs never stack on first launch.
+        // (After this, OEM auto-start + locking the recents card is the only
+        // remaining manual step the code cannot do for the user.)
+        if (prefs.enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) {
+            val power = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            if (power != null && !power.isIgnoringBatteryOptimizations(packageName)) {
+                runCatching {
+                    startActivity(Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:$packageName")
+                    ))
+                }
+            }
+        }
+
         // Arm the accessibility watchdog from here as well as from the capture
         // service. Starting it only there was a bootstrapping bug: the capture
         // service is stopped exactly when the watchdog is most needed, so nothing
