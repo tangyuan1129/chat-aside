@@ -46,7 +46,11 @@ open class ChatCaptureService : AccessibilityService() {
     private val worker = Executors.newFixedThreadPool(2)
 
     /** Adapted chat apps, keyed by package name. */
-    private val adapters = listOf(WeChatAdapter(), QQAdapter(), XAdapter(), FeishuAdapter()).associateBy { it.pkg }
+    private val adapters = listOf(
+        WeChatAdapter(), QQAdapter(), XAdapter(), FeishuAdapter(),
+        DouyinAdapter("com.ss.android.ugc.aweme"),
+        DouyinAdapter("com.ss.android.ugc.aweme.lite")
+    ).associateBy { it.pkg }
 
     /** Submit to the worker, ignoring rejection after the service is torn down
      *  (a stale overlay callback must never crash the process). */

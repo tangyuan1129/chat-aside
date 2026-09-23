@@ -508,3 +508,97 @@ class XAdapter : ChatAppAdapter {
 
     private data class Row(val top: Int, val sender: String, val text: String)
 }
+
+/**
+ * Douyin / Douyin Lite private messages (私信). Douyin obfuscates its node ids,
+ * so — unlike WeChat/Feishu — this adapter is geometry-driven, not id-targeted.
+ *
+ * "In a chat window" needs ALL of:
+ *   - an EditText (the message input), and
+ *   - a scrollable message list (RecyclerView / ListView / ScrollView), and
+ *   - rows on BOTH sides (own messages right, the other's left).
+ * The both-sides check is the important guard: a video's comment list also has
+ * an EditText but is single-column, so it would otherwise be mistaken for a chat.
+ *
+ * Sender side = horizontal position (right of centre → me, else other) — the
+ * same left/right convention Douyin uses for bubbles. Message text is read from
+ * TextViews; timestamps, relative times and short UI labels are dropped.
+ *
+ * FIRST PASS — written before a live node dump was available (device offline at
+ * authoring time), so the side threshold and filtering are best-guess. Tune them
+ * against a real 私信 screen. If Douyin hides bubble text from accessibility
+ * (as WeChat does), this returns an empty snapshot and the OCR fallback reads
+ * the screen instead (all lines filed as "other").
+ */
+class DouyinAdapter(override val pkg: String) : ChatAppAdapter {
+    override fun extract(root: AccessibilityNodeInfo, res: Resources): ChatSnapshot? {
+        val width = res.displayMetrics.widthPixels
+        val height = res.displayMetrics.heightPixels
+        val actionBarMax = (height * 0.14f).toInt()
+        val rows = ArrayList<Row>()
+        var firstRowTop = Int.MAX_VALUE
+        var hasInput = false
+        var hasScroll = false
+        var leftCount = 0
+        var rightCount = 0
+
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.addLast(root)
+        var guard = 0
+        while (stack.isNotEmpty() && guard < 6000) {
+            guard++
+            val node = stack.removeLast()
+            val cls = node.className?.toString()
+            if (!hasInput && (node.isEditable || cls == "android.widget.EditText")) hasInput = true
+            if (!hasScroll && (
+                    cls == "androidx.recyclerview.widget.RecyclerView" ||
+                    cls == "android.widget.ListView" ||
+                    cls == "android.widget.ScrollView" ||
+                    cls == "androidx.core.widget.NestedScrollView")
+            ) hasScroll = true
+            if (cls == "android.widget.TextView") {
+                val text = node.text?.toString()?.trim()
+                if (!text.isNullOrBlank() && text.length in 2..2000 &&
+                    !looksLikeTimestamp(text) && !looksLikeRelativeTime(text) &&
+                    text !in DOUYIN_UI_WORDS
+                ) {
+                    val b = Rect(); node.getBoundsInScreen(b)
+                    // Drop the action-bar / tab text up top, and tiny narrow
+                    // labels (buttons) — a bubble is a fairly wide block.
+                    if (b.top < actionBarMax) continue
+                    if (b.width() < width * 0.35f) continue
+                    val isMe = (b.centerX().toFloat() / width) > 0.5f
+                    if (isMe) rightCount++ else leftCount++
+                    rows.add(Row(b.top, if (isMe) "me" else "other", text))
+                    if (b.top < firstRowTop) firstRowTop = b.top
+                }
+            }
+            for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+        }
+        // Not a chat window → let the service do nothing (or fall back to manual
+        // OCR via the bubble menu).
+        if (!hasInput || !hasScroll) return null
+        // Single-column screens (comment lists) have bubbles on only one side.
+        if (leftCount == 0 || rightCount == 0) return null
+
+        val title = findTitleInActionBar(root, firstRowTop, width, res, 0.2, 0.8)
+        // In a chat window but no text read → empty snapshot (OCR fallback cue).
+        if (rows.isEmpty()) return ChatSnapshot(title, emptyList())
+        rows.sortBy { it.top }
+        val msgs = rows.map { Msg(it.side, it.text) }
+        return ChatSnapshot(title, msgs)
+    }
+
+    private data class Row(val top: Int, val side: String, val text: String)
+}
+
+/** Relative-time labels (刚刚 / 3分钟前 / 2天前 …) that are not timestamps. */
+private fun looksLikeRelativeTime(t: String): Boolean =
+    t == "刚刚" || t.endsWith("前") && Regex("""\d+\s*(分钟|小时|天|周|月)""").containsMatchIn(t)
+
+/** Short action labels that occasionally surface as TextViews and must not be
+ *  read as a message. */
+private val DOUYIN_UI_WORDS = setOf(
+    "发送", "分享", "转发", "收藏", "更多", "返回", "设置", "私信", "消息",
+    "关注", "评论", "取消", "确认", "表情", "图片", "相册", "拍照", "语音"
+)
