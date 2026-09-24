@@ -254,8 +254,10 @@ open class ChatCaptureService : AccessibilityService() {
             // Same content and the bubble is already up → nothing to do.
             if (sig == lastSignature && showing) return
             // Same content but the bubble is gone (killed by MIUI, or we left and came
-            // back) → just put the bubble back, do NOT re-analyze (saves tokens/time).
-            if (sig == lastSignature && !showing) { main.post { overlay?.showIdle(snapshot.title) }; return }
+            // back) → restore the previous judgment for THIS conversation instead of
+            // dropping the user back to the "分析当前对话" button. No re-analysis,
+            // no re-spend — the result was already paid for.
+            if (sig == lastSignature && !showing) { main.post { overlay?.showRestored() }; return }
             // Content changed within the SAME conversation: keep the previous judgment
             // on screen and re-evaluate. The loading/result states below replace it
             // without ever flashing the idle "分析当前对话" button.
@@ -264,9 +266,10 @@ open class ChatCaptureService : AccessibilityService() {
                 snapshot.messages.takeLast(6).joinToString(" | ") { "${it.side}:${it.text.length}" }) // sides + lengths only, never content
 
             // Trigger only when the newest message is from the other person, and only
-            // if auto-analyze is on. Otherwise show the idle bubble (tap to analyze).
+            // if auto-analyze is on. Otherwise keep/restore whatever this
+            // conversation already has (a previous judgment, or the idle bubble).
             if (snapshot.latestFrom != "other" || !prefs.autoAnalyze) {
-                main.post { overlay?.showIdle(snapshot.title) }; return
+                main.post { overlay?.showRestored() }; return
             }
 
             pendingSnapshot = snapshot
@@ -530,7 +533,7 @@ open class ChatCaptureService : AccessibilityService() {
         val sig = snapshot.signature()
         // Manual taps always re-run; the automatic path dedupes like the tree path.
         if (!manual && sig == lastSignature) {
-            if (overlay?.isShowing() != true) overlay?.showIdle(snapshot.title)
+            if (overlay?.isShowing() != true) overlay?.showRestored()
             return
         }
         // Only wipe when we've actually moved to a different conversation; a new

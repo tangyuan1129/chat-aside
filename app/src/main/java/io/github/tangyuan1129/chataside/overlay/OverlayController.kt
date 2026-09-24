@@ -336,6 +336,20 @@ class OverlayController(private val ctx: Context) {
     }
 
     /**
+     * Re-show the panel after the overlay was torn down (app switch, launcher,
+     * ColorOS kill) while the SAME conversation is still on screen. Restores
+     * the stored judgment instead of dropping the user back to the
+     * "分析当前对话" button — leaving and re-entering a chat must not throw
+     * away a result they already paid for. Falls back to the idle button when
+     * there is nothing stored (a different conversation resets it first).
+     */
+    fun showRestored() {
+        val j = lastJudgment
+        if (j != null) { render(j, generating = false); return }
+        showIdle(null)
+    }
+
+    /**
      * Drop whatever judgment/candidates/note belonged to the previous
      * conversation. Call this before showing anything for a different chat
      * window (a different app, or new content in the same one) — otherwise a
