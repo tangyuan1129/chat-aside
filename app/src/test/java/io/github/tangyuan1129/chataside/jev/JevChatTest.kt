@@ -30,6 +30,17 @@ class JevChatTest {
     }
 
     @Test
+    fun `the prompt demands a full distribution and per-transcript grounding`() {
+        val p = JevChat.systemPrompt()
+        // Without a per-option spread, a temperature-0 chat model collapses
+        // every casual thread to its habitual choice + round confidence —
+        // two different conversations then show identical judgments.
+        assertTrue("must ask for probabilities", p.contains("\"probabilities\""))
+        assertTrue("must demand per-transcript grounding", p.contains("THIS transcript"))
+        assertTrue("must forbid template answers", p.contains("identical answers"))
+    }
+
+    @Test
     fun `every judgment question appears in the prompt`() {
         val block = JevChat.questionsBlock(JevQuestions.judge())
         for (id in listOf(

@@ -649,6 +649,13 @@ class OverlayController(private val ctx: Context) {
     private fun detailBlock(a: Analysis, views: ArrayList<View>) {
         views.add(divider())
         views.add(hint("详细判断 · 每题概率"))
+        // The chat-judge route's numbers are the model's own estimates, not the
+        // calibrated distributions of a trained decision model. Say so once, so
+        // identical-looking spreads on similar small talk are not mistaken for
+        // a frozen or cached result.
+        if (prefs.judgeProvider == Prefs.PROVIDER_CHAT) {
+            views.add(hint("概率为聊天模型自行估计（非 Jev 校准值），仅供参考"))
+        }
         a.literalQuestion?.let {
             val yes = (it * 100).roundToInt()
             views.add(detail("字面还是话里有话", "字面意思 $yes% / 话里有话 ${100 - yes}%"))
