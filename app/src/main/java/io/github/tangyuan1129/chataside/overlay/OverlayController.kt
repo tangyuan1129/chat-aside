@@ -24,6 +24,7 @@ import android.widget.TextView
 import android.widget.Toast
 import io.github.tangyuan1129.chataside.core.Analysis
 import io.github.tangyuan1129.chataside.core.ChatSnapshot
+import io.github.tangyuan1129.chataside.core.Choice
 import io.github.tangyuan1129.chataside.core.Prefs
 import io.github.tangyuan1129.chataside.core.RankedReply
 import kotlin.math.abs
@@ -617,6 +618,9 @@ class OverlayController(private val ctx: Context) {
         a.shouldReplyNow?.let { bits.add(if (it >= 0.5) "可给实质" else "先别给实质") }
         if (bits.isNotEmpty()) views.add(line(bits.joinToString("  ·  "), "#374151", 13f))
         a.tensionResolved?.let { if (it >= 0.7) views.add(line("紧张已缓解", "#16A34A", 12f)) }
+        // The full 7-question breakdown — the data already arrives in the one
+        // judgment call; this just renders what the summary compresses away.
+        detailBlock(a, views)
 
         views.add(divider())
         if (!prefs.advisorGenerateReplies) {
@@ -634,6 +638,54 @@ class OverlayController(private val ctx: Context) {
         }
         views.add(reAnalyzeBtn())
         return views
+    }
+
+    /**
+     * The full 7-question breakdown, the way upstream's demo sheet shows it:
+     * every judgment question with its probability distribution, not just the
+     * compressed summary above. All of it already arrives in the single
+     * judgment response — the summary simply didn't render it.
+     */
+    private fun detailBlock(a: Analysis, views: ArrayList<View>) {
+        views.add(divider())
+        views.add(hint("详细判断 · 每题概率"))
+        a.literalQuestion?.let {
+            val yes = (it * 100).roundToInt()
+            views.add(detail("字面还是话里有话", "字面意思 $yes% / 话里有话 ${100 - yes}%"))
+        }
+        a.trueIntent?.let { views.add(detail("当前真实意图", dist(it, INTENT))) }
+        a.dangerLevel?.let {
+            views.add(detail("危险等级", "${it.score}/${it.maxLevel}（把握 ${(it.confidence * 100).roundToInt()}%）"))
+        }
+        a.shouldReplyNow?.let {
+            val yes = (it * 100).roundToInt()
+            views.add(detail("下一条该不该给实质", "该给 $yes% / 先别给 ${100 - yes}%"))
+        }
+        a.sheNeeds?.let { views.add(detail("她现在需要什么", dist(it, NEEDS))) }
+        a.bestAction?.let { views.add(detail("最好的动作类型", dist(it, ACTION))) }
+        a.tensionResolved?.let {
+            val yes = (it * 100).roundToInt()
+            views.add(detail("紧张是否已缓解", "已缓解 $yes% / 没有 ${100 - yes}%"))
+        }
+    }
+
+    /** One question's distribution: sorted desc, Chinese labels, top 4. Falls
+     *  back to the chosen option + confidence when the model gave no spread
+     *  (the chat-judge route answers with a choice but no probabilities). */
+    private fun dist(c: Choice, labels: Map<String, String>): String {
+        if (c.probabilities.isEmpty()) {
+            return "${labels[c.choice] ?: c.choice} ${(c.confidence * 100).roundToInt()}%"
+        }
+        return c.probabilities.entries
+            .sortedByDescending { it.value }
+            .take(4)
+            .joinToString(" / ") { (k, v) -> "${labels[k] ?: k} ${(v * 100).roundToInt()}%" }
+    }
+
+    private fun detail(question: String, value: String): View = TextView(ctx).apply {
+        text = "$question：$value"
+        setTextColor(Color.parseColor("#374151")); textSize = 12f
+        setPadding(0, dp(1), 0, dp(1))
     }
 
     /** Advisor mode's read-only look at a candidate: copy is fine, fill is not. */
