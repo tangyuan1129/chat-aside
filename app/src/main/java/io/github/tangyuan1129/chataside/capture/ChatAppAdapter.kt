@@ -69,7 +69,9 @@ internal fun findTitleInActionBar(
             }
         }
         for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+        if (node !== root) node.recycle()
     }
+    while (stack.isNotEmpty()) stack.removeLast().recycle()
     return best
 }
 
@@ -123,7 +125,9 @@ internal fun findWeChatTitle(
             }
         }
         for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+        if (node !== root) node.recycle()
     }
+    while (stack.isNotEmpty()) stack.removeLast().recycle()
     return bestCounted ?: bestPlain
 }
 
@@ -162,7 +166,9 @@ class WeChatAdapter : ChatAppAdapter {
                 }
             }
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+            if (node !== root) node.recycle()
         }
+        while (stack.isNotEmpty()) stack.removeLast().recycle()
         val title = findWeChatTitle(root, firstBubbleTop, width, res)
         // In a chat but nothing readable → empty snapshot, the OCR fallback cue.
         if (bubbles.isEmpty()) return if (isChat) ChatSnapshot(title, emptyList()) else null
@@ -221,7 +227,9 @@ class QQAdapter : ChatAppAdapter {
             if (!hasInput && id == INPUT_ID) hasInput = true
             if (id == TITLE_ID && title == null) text?.let { if (it.isNotBlank()) title = it }
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+            if (node !== root) node.recycle()
         }
+        while (stack.isNotEmpty()) stack.removeLast().recycle()
         if (bubbles.isEmpty() && !hasInput) return null
 
         if (title == null) title = findTitleInActionBar(root, firstBubbleTop, width, res)
@@ -254,14 +262,17 @@ private fun feishuHasReadState(bubble: AccessibilityNodeInfo): Boolean {
     val stack = ArrayDeque<AccessibilityNodeInfo>()
     stack.addLast(bubble)
     var guard = 0
+    var found = false
     while (stack.isNotEmpty() && guard < 400) {
         guard++
         val node = stack.removeLast()
         val id = node.viewIdResourceName ?: ""
-        if (id.endsWith(FEISHU_READ_STATE_ID)) return true
+        if (id.endsWith(FEISHU_READ_STATE_ID)) { found = true; break }
         for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+        if (node !== bubble) node.recycle()
     }
-    return false
+    while (stack.isNotEmpty()) stack.removeLast().recycle()
+    return found
 }
 
 /**
@@ -294,9 +305,11 @@ internal fun collectFeishuBubbleRects(
                 rects.add(BubbleRect(Rect(b), if (feishuHasReadState(node)) "me" else "other"))
             }
         }
-        for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
-    }
-    rects.sortBy { it.rect.top }
+            for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+            if (node !== root) node.recycle()
+        }
+        while (stack.isNotEmpty()) stack.removeLast().recycle()
+        rects.sortBy { it.rect.top }
     return rects
 }
 
@@ -351,7 +364,9 @@ class FeishuAdapter : ChatAppAdapter {
                 }
             }
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+            if (node !== root) node.recycle()
         }
+        while (stack.isNotEmpty()) stack.removeLast().recycle()
         if (!isChat) return null
 
         if (items.isEmpty()) return ChatSnapshot(title, emptyList(), rects)
@@ -484,7 +499,9 @@ class XAdapter : ChatAppAdapter {
                 if (text == "聊天" || text == "Messages") sawListHeading = true
             }
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+            if (node !== root) node.recycle()
         }
+        while (stack.isNotEmpty()) stack.removeLast().recycle()
         // Explicit "this is the DM list, not a thread" signals — checked before
         // the generic rule below so they win even if a search box's EditText
         // would otherwise have counted as "hasInput".
@@ -510,37 +527,47 @@ class XAdapter : ChatAppAdapter {
 }
 
 /**
- * Douyin / Douyin Lite private messages (私信). Douyin obfuscates its node ids,
- * so — unlike WeChat/Feishu — this adapter is geometry-driven, not id-targeted.
+ * Douyin / Douyin Lite private messages (私信). Most node ids are obfuscated,
+ * but a live dump (aweme, 2026-09-24) showed two stable facts this adapter is
+ * now built on:
  *
- * "In a chat window" needs ALL of:
- *   - an EditText (the message input), and
- *   - a scrollable message list (RecyclerView / ListView / ScrollView), and
- *   - rows on BOTH sides (own messages right, the other's left).
- * The both-sides check is the important guard: a video's comment list also has
- * an EditText but is single-column, so it would otherwise be mistaken for a chat.
+ *  1. The DM input box carries the one un-obfuscated id `msg_et` — and ONLY the
+ *     DM screen has it (comment / search boxes don't). Its presence is the
+ *     definitive "we are in a private chat" signal.
+ *  2. Bubble text TextViews carry NO resource-id at all, while every piece of
+ *     chrome does: contact strip `ef=`, quick-reply chips `n-h`, timestamps
+ *     `s1-`, system notices `s2b`, tab labels `0p=`, reaction counts `xnz`…
+ *     The old geometry-only rules read that chrome as "messages" (the contact
+ *     strip alone is 5 rows, which is how the `totalRows >= 4` fallback could
+ *     misfire). Real bubbles = id-less TextViews inside the message list — the
+ *     tall scrollable sitting directly above the input box (bottom within 60px).
  *
- * Sender side = horizontal position (right of centre → me, else other) — the
- * same left/right convention Douyin uses for bubbles. Message text is read from
- * TextViews; timestamps, relative times and short UI labels are dropped.
+ * Two paths:
+ *  - `msg_et` present → precise path: rows = id-less texts in the message list,
+ *    accepted even when one-sided or a single row.
+ *  - otherwise (Douyin Lite unverified, or a non-DM EditText) → geometry
+ *    fallback. When NO id-less text exists anywhere, the weak `>= 4 rows`
+ *    fallback is disabled — that is exactly the comment-list misfire shape —
+ *    and the strong two-sided signal is required instead. A release that gives
+ *    bubbles ids degrades to the old behaviour, never below it.
  *
- * FIRST PASS — written before a live node dump was available (device offline at
- * authoring time), so the side threshold and filtering are best-guess. Tune them
- * against a real 私信 screen. If Douyin hides bubble text from accessibility
- * (as WeChat does), this returns an empty snapshot and the OCR fallback reads
- * the screen instead (all lines filed as "other").
+ * Sender side = horizontal position (right of centre → me, else other). If
+ * Douyin hides bubble text from accessibility (as WeChat does), the precise
+ * path returns an empty snapshot and the OCR fallback reads the screen instead.
  */
 class DouyinAdapter(override val pkg: String) : ChatAppAdapter {
     override fun extract(root: AccessibilityNodeInfo, res: Resources): ChatSnapshot? {
         val width = res.displayMetrics.widthPixels
         val height = res.displayMetrics.heightPixels
         val actionBarMax = (height * 0.14f).toInt()
-        val rows = ArrayList<Row>()
+        val allRows = ArrayList<Row>()      // geometry pool — old behaviour
+        val idless = ArrayList<BubbleHit>() // id-less texts — the real bubbles
+        val scrollables = ArrayList<Rect>()
         var firstRowTop = Int.MAX_VALUE
         var hasInput = false
+        var hasDmInput = false
+        var inputTop = Int.MAX_VALUE
         var hasScroll = false
-        var leftCount = 0
-        var rightCount = 0
 
         val stack = ArrayDeque<AccessibilityNodeInfo>()
         stack.addLast(root)
@@ -549,13 +576,29 @@ class DouyinAdapter(override val pkg: String) : ChatAppAdapter {
             guard++
             val node = stack.removeLast()
             val cls = node.className?.toString()
-            if (!hasInput && (node.isEditable || cls == "android.widget.EditText")) hasInput = true
+            if (node.isEditable || cls == "android.widget.EditText") {
+                hasInput = true
+                val b = Rect(); node.getBoundsInScreen(b)
+                if (b.top < inputTop) inputTop = b.top
+                // Douyin's one stable, un-obfuscated id — the private-message
+                // input box. Verified in a live dump (aweme 2026-09); comment
+                // and search boxes do not carry it.
+                if (node.viewIdResourceName?.endsWith("/msg_et") == true) hasDmInput = true
+            }
             if (!hasScroll && (
                     cls == "androidx.recyclerview.widget.RecyclerView" ||
                     cls == "android.widget.ListView" ||
                     cls == "android.widget.ScrollView" ||
                     cls == "androidx.core.widget.NestedScrollView")
             ) hasScroll = true
+            if (cls == "androidx.recyclerview.widget.RecyclerView" ||
+                cls == "android.widget.ListView" ||
+                cls == "android.widget.ScrollView" ||
+                cls == "androidx.core.widget.NestedScrollView"
+            ) {
+                val b = Rect(); node.getBoundsInScreen(b)
+                scrollables.add(b)
+            }
             if (cls == "android.widget.TextView") {
                 val text = node.text?.toString()?.trim()
                 if (!text.isNullOrBlank() && text.length in 2..2000 &&
@@ -564,31 +607,64 @@ class DouyinAdapter(override val pkg: String) : ChatAppAdapter {
                 ) {
                     val b = Rect(); node.getBoundsInScreen(b)
                     // Drop the action-bar / tab text up top, and the input bar /
-                    // send area at the bottom. A message bubble is a text block at
-                    // least ~12% of the screen wide; the old 35% floor wrongly
-                    // dropped short bubbles, which is why single-conversation
-                    // DMs showed nothing.
+                    // send area at the bottom.
                     if (b.top < actionBarMax) continue
                     if (b.bottom > height * 0.9f) continue
-                    if (b.width() < width * 0.12f) continue
+                    val w = b.width()
                     val isMe = (b.centerX().toFloat() / width) > 0.5f
-                    if (isMe) rightCount++ else leftCount++
-                    rows.add(Row(b.top, if (isMe) "me" else "other", text))
-                    if (b.top < firstRowTop) firstRowTop = b.top
+                    if (w >= width * 0.12f) {
+                        allRows.add(Row(b.top, if (isMe) "me" else "other", text))
+                        if (b.top < firstRowTop) firstRowTop = b.top
+                    }
+                    // Bubble text has no resource-id; chrome always does. Collect
+                    // id-less texts (slightly wider 9% floor — a 2-character
+                    // bubble is narrow) and check list membership after the walk.
+                    if (node.viewIdResourceName.isNullOrEmpty() && w >= width * 0.09f) {
+                        idless.add(BubbleHit(b, Row(b.top, if (isMe) "me" else "other", text)))
+                    }
                 }
             }
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+            if (node !== root) node.recycle()
         }
-        val totalRows = leftCount + rightCount
-        // A private-message window needs an input box. Beyond that, accept either
-        // a scrollable two-sided chat, or any screen with an input and >=4 message
-        // rows (covers Douyin's custom list class and one-sided threads — the row
-        // floor stops single-row UI from qualifying). NOTE: the >=4 fallback can
-        // still misfire on a video's comment list; the exact signals need a live
-        // node dump to tighten.
+        while (stack.isNotEmpty()) stack.removeLast().recycle()
+
+        // The message list is the tall scrollable sitting directly above the
+        // input box (live dump: list bottom 2608 vs input top 2606; the
+        // viewpager and the short strips above/below it all fail one bound).
+        val listRect = if (inputTop != Int.MAX_VALUE)
+            scrollables.filter {
+                it.height() >= height * 0.35f && it.bottom >= inputTop - 60 && it.bottom <= inputTop + 60
+            }.maxByOrNull { it.height() }
+        else null
+        val bubbleRows = if (listRect != null) {
+            val bounds = Rect(listRect); bounds.inset(0, -4)
+            idless.filter { bounds.contains(it.rect) }.map { it.row }
+        } else idless.map { it.row }
+
         if (!hasInput) return null
-        val looksLikeChat = (hasScroll && leftCount > 0 && rightCount > 0) || totalRows >= 4
-        if (!looksLikeChat) return null
+
+        // Precise path: the DM input id is present — accept whatever id-less
+        // bubbles were found (even a single one-sided row; an empty list means
+        // hidden text and becomes the OCR cue below).
+        // Fallback path: no msg_et (Douyin Lite unverified, or a non-DM
+        // EditText such as the comment box). Prefer the bubble rows when they
+        // exist; keep the old geometry gate on them. When NO id-less text
+        // exists at all, the weak `>= 4 rows` fallback is exactly the shape
+        // that misfires on comment lists — demand the strong two-sided signal
+        // instead (single-column comment lists fail it; a release that gives
+        // bubbles ids merely degrades to the old behaviour).
+        val rows = ArrayList(bubbleRows.ifEmpty { allRows })
+        if (!hasDmInput) {
+            val leftCount = rows.count { it.side == "other" }
+            val rightCount = rows.count { it.side == "me" }
+            val looksLikeChat = if (bubbleRows.isEmpty()) {
+                hasScroll && leftCount > 0 && rightCount > 0
+            } else {
+                (hasScroll && leftCount > 0 && rightCount > 0) || rows.size >= 4
+            }
+            if (!looksLikeChat) return null
+        }
 
         val title = findTitleInActionBar(root, firstRowTop, width, res, 0.2, 0.8)
         // In a chat window but no text read → empty snapshot (OCR fallback cue).
@@ -599,6 +675,9 @@ class DouyinAdapter(override val pkg: String) : ChatAppAdapter {
     }
 
     private data class Row(val top: Int, val side: String, val text: String)
+
+    /** An id-less text candidate with its screen bounds, for list-membership. */
+    private data class BubbleHit(val rect: Rect, val row: Row)
 }
 
 /** Relative-time labels (刚刚 / 3分钟前 / 2天前 …) that are not timestamps. */

@@ -180,9 +180,12 @@ class Prefs(context: Context, prefsName: String = PREFS_MAIN) {
         get() = sp.getInt(K_BUBBLE_X, -1)
         set(v) = sp.edit().putInt(K_BUBBLE_X, v).apply()
 
-    /** Auto-analyze on every incoming message; if false, user taps to analyze. */
+    /** Auto-analyze on every incoming message; if false, the panel stays idle
+     *  ("分析当前对话") until the user taps it. Default OFF: opening a chat
+     *  must never fire a paid API call the user did not ask for — manual by
+     *  default, opt in to auto. */
     var autoAnalyze: Boolean
-        get() = sp.getBoolean(K_AUTO, true)
+        get() = sp.getBoolean(K_AUTO, false)
         set(v) = sp.edit().putBoolean(K_AUTO, v).apply()
 
     // -------------------------------------------------------- overlay mode

@@ -541,7 +541,7 @@ class SettingsActivity : AppCompatActivity() {
             prefs.relationship = relEdit.text.toString()   // blank stays blank, on purpose
             prefs.whitelist = wlEdit.text.toString().split("\n")
                 .map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-            prefs.autoAnalyze = (autoRow.tag as? Boolean) ?: true
+            prefs.autoAnalyze = (autoRow.tag as? Boolean) ?: false
             prefs.ocrFallback = (ocrFallbackRow.tag as? Boolean) ?: true
             prefs.ocrAutoAnalyze = (ocrAutoRow.tag as? Boolean) ?: false
             prefs.contextEnabled = (ctxRow.tag as? Boolean) ?: false

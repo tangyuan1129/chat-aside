@@ -116,21 +116,25 @@ class ScreenCapture(
         // display shot when the window id is unknown or the call is unavailable.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val node = runCatching { service.rootInActiveWindow }.getOrNull()
-            val windowId = node?.windowId
-            if (windowId != null && windowId != -1) {
-                windowBounds = runCatching {
-                    val r = Rect()
-                    node.window?.getBoundsInScreen(r)
-                    r
-                }.getOrNull()?.takeIf { it.width() > 0 && it.height() > 0 }
-                try {
-                    service.takeScreenshotOfWindow(windowId, exec, cb)
-                    main.postDelayed(timeout, TIMEOUT_MS)
-                    return
-                } catch (e: Throwable) {
-                    windowBounds = null
-                    Log.w(TAG, "takeScreenshotOfWindow unavailable: ${e.javaClass.simpleName}")
+            try {
+                val windowId = node?.windowId
+                if (windowId != null && windowId != -1) {
+                    windowBounds = runCatching {
+                        val r = Rect()
+                        node.window?.getBoundsInScreen(r)
+                        r
+                    }.getOrNull()?.takeIf { it.width() > 0 && it.height() > 0 }
+                    try {
+                        service.takeScreenshotOfWindow(windowId, exec, cb)
+                        main.postDelayed(timeout, TIMEOUT_MS)
+                        return
+                    } catch (e: Throwable) {
+                        windowBounds = null
+                        Log.w(TAG, "takeScreenshotOfWindow unavailable: ${e.javaClass.simpleName}")
+                    }
                 }
+            } finally {
+                node?.recycle()
             }
         }
         try {
