@@ -4,6 +4,7 @@ import io.github.tangyuan1129.chataside.core.Analysis
 import io.github.tangyuan1129.chataside.core.ChatSnapshot
 import io.github.tangyuan1129.chataside.core.Prefs
 import io.github.tangyuan1129.chataside.core.RankedReply
+import io.github.tangyuan1129.chataside.core.TimelineResult
 import io.github.tangyuan1129.chataside.core.kb.ChatContext
 
 /**
@@ -29,6 +30,10 @@ class JevClient(prefs: Prefs) {
         val candidates = replyClient.draft(snapshot, relationship, ctx)
         return judgeClient.rank(snapshot, relationship, candidates, ctx)
     }
+
+    /** Per-message annotation timeline (方案 B). Chat-judge route only. */
+    fun judgeTimeline(snapshot: ChatSnapshot, relationship: String): TimelineResult =
+        judgeClient.judgeTimeline(snapshot, relationship)
 
     /** Judge + replies, sequential. Used by the settings connectivity test. */
     fun analyze(snapshot: ChatSnapshot, relationship: String, ctx: ChatContext? = null): Analysis {

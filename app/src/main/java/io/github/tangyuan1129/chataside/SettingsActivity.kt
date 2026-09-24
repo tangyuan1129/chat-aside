@@ -411,6 +411,9 @@ class SettingsActivity : AppCompatActivity() {
         val ocrAutoRow = toggleRow("OCR 模式自动分析", prefs.ocrAutoAnalyze)
         card2.addView(ocrAutoRow)
         card2.addView(text("关闭时 OCR 认完只亮悬浮球，点一下再分析。", 11f, sub))
+        val timelineRow = toggleRow("逐条批注（多一次模型调用）", prefs.advisorTimeline)
+        card2.addView(timelineRow)
+        card2.addView(text("参谋模式下面板按对话顺序逐条批注每条对方消息；只在「聊天模型兼任判断」档位生效。", 11f, sub))
 
         // --- 知识库 / 关联上下文（D 阶段） ---
         val ctxRow = toggleRow("记录聊天历史（只存本机，用于关联上下文）", prefs.contextEnabled)
@@ -544,6 +547,7 @@ class SettingsActivity : AppCompatActivity() {
             prefs.autoAnalyze = (autoRow.tag as? Boolean) ?: false
             prefs.ocrFallback = (ocrFallbackRow.tag as? Boolean) ?: true
             prefs.ocrAutoAnalyze = (ocrAutoRow.tag as? Boolean) ?: false
+            prefs.advisorTimeline = (timelineRow.tag as? Boolean) ?: true
             prefs.contextEnabled = (ctxRow.tag as? Boolean) ?: false
             prefs.contextHistoryCount =
                 ctxCountEdit.text.toString().trim().toIntOrNull()?.coerceIn(0, 100) ?: 30

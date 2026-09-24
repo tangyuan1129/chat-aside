@@ -236,6 +236,12 @@ class Prefs(context: Context, prefsName: String = PREFS_MAIN) {
         get() = sp.getBoolean(K_ADVISOR_GEN, false)
         set(v) = sp.edit().putBoolean(K_ADVISOR_GEN, v).apply()
 
+    /** Per-message annotation timeline (方案 B). Costs one extra chat call per
+     *  analysis; chat-judge route only. Default ON. */
+    var advisorTimeline: Boolean
+        get() = sp.getBoolean(K_ADVISOR_TIMELINE, true)
+        set(v) = sp.edit().putBoolean(K_ADVISOR_TIMELINE, v).apply()
+
     // ------------------------------------------------------------- helpers
 
     /** Reply route key, falling back to the judge key. */
@@ -312,6 +318,7 @@ class Prefs(context: Context, prefsName: String = PREFS_MAIN) {
         private const val K_CHOOSER_DBL_SEND = "chooser_double_tap_send"
         private const val K_CHOOSER_DBL_WINDOW = "chooser_double_tap_window_ms"
         private const val K_ADVISOR_GEN = "advisor_generate_replies"
+        private const val K_ADVISOR_TIMELINE = "advisor_timeline"
 
         const val PROVIDER_OPENROUTER = "openrouter"
         const val PROVIDER_TYPESAFE = "typesafe"

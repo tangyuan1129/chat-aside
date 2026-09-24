@@ -27,6 +27,7 @@ import io.github.tangyuan1129.chataside.core.ChatSnapshot
 import io.github.tangyuan1129.chataside.core.Choice
 import io.github.tangyuan1129.chataside.core.Prefs
 import io.github.tangyuan1129.chataside.core.RankedReply
+import io.github.tangyuan1129.chataside.core.TimelineNote
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -97,6 +98,12 @@ class OverlayController(private val ctx: Context) {
     fun isShowing(): Boolean = root != null
 
     private var lastJudgment: Analysis? = null
+
+    /** Per-message annotation timeline (方案 B) and its fetch state. Null items
+     *  + loading flag = call in flight; error short-circuits to the fallback. */
+    private var timeline: List<TimelineNote>? = null
+    private var timelineLoading = false
+    private var timelineError: String? = null
     private var lastFill: ((String) -> Unit)? = null
 
     /** Set when [showReplies] was handed a draftAndRank failure, so the panel
@@ -362,6 +369,9 @@ class OverlayController(private val ctx: Context) {
         lastFill = null
         noteText = null
         replyError = null
+        timeline = null
+        timelineLoading = false
+        timelineError = null
         // An armed option must not survive into another conversation: its second
         // tap would send to whoever the chat window now shows.
         gate.clear()
@@ -422,6 +432,24 @@ class OverlayController(private val ctx: Context) {
         replyError = error
         val a = lastJudgment?.copy(rankedReplies = ranked) ?: return
         lastJudgment = a
+        render(a, generating = false)
+    }
+
+    /** Marks the per-message timeline as in-flight so the panel shows
+     *  "生成中…" until [showTimeline] lands. Call before the first render. */
+    fun beginTimeline() {
+        timeline = null
+        timelineError = null
+        timelineLoading = true
+    }
+
+    /** Fills in the per-message annotations (or their error) and re-renders.
+     *  No-op when no judgment is on screen yet. */
+    fun showTimeline(items: List<TimelineNote>, error: String?) {
+        timeline = items
+        timelineError = error
+        timelineLoading = false
+        val a = lastJudgment ?: return
         render(a, generating = false)
     }
 
@@ -632,9 +660,21 @@ class OverlayController(private val ctx: Context) {
         a.shouldReplyNow?.let { bits.add(if (it >= 0.5) "可给实质" else "先别给实质") }
         if (bits.isNotEmpty()) views.add(line(bits.joinToString("  ·  "), "#374151", 13f))
         a.tensionResolved?.let { if (it >= 0.7) views.add(line("紧张已缓解", "#16A34A", 12f)) }
-        // The full 7-question breakdown — the data already arrives in the one
-        // judgment call; this just renders what the summary compresses away.
-        detailBlock(a, views)
+        // Per-message annotations when they are available (chat-judge route +
+        // toggle on); the per-thread breakdown covers the same ground otherwise.
+        val tl = timeline
+        when {
+            tl != null && tl.isNotEmpty() -> timelineBlock(tl, views)
+            timelineLoading -> {
+                views.add(divider())
+                views.add(hint("逐条批注生成中…"))
+            }
+            timelineError != null -> {
+                views.add(divider())
+                views.add(hint("逐条批注失败：$timelineError"))
+            }
+            else -> detailBlock(a, views)
+        }
 
         views.add(divider())
         if (!prefs.advisorGenerateReplies) {
@@ -707,6 +747,19 @@ class OverlayController(private val ctx: Context) {
         text = "$question：$value"
         setTextColor(Color.parseColor("#374151")); textSize = 12f
         setPadding(0, dp(1), 0, dp(1))
+    }
+
+    /** 方案 B 的核心视图：按对话顺序，每条对方消息下面跟它的批注行——
+     *  上游演示图的信息设计，收在我们自己的面板里。消息原文截断展示，
+     *  批注行原样渲染（措辞由 JevTimeline 的提示词负责）。 */
+    private fun timelineBlock(items: List<TimelineNote>, views: ArrayList<View>) {
+        views.add(divider())
+        views.add(hint("逐条批注"))
+        items.forEach { n ->
+            val quoted = if (n.text.length > 26) n.text.take(26) + "…" else n.text
+            views.add(line("「$quoted」", "#6B7280", 11.5f, true))
+            n.lines.forEach { views.add(line("· $it", "#374151", 12f)) }
+        }
     }
 
     /** Advisor mode's read-only look at a candidate: copy is fine, fill is not. */

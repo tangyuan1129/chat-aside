@@ -306,6 +306,12 @@ open class ChatCaptureService : AccessibilityService() {
         if (analyzing) return
         if (!prefs.hasKey()) { main.post { overlay?.showError("未设置判断接口密钥，去设置里填") }; return }
         analyzing = true
+        // 方案 B: per-message annotations ride along with the judgment —
+        // chat-judge route only (the Jev protocol has no such question type),
+        // advisor mode only, user-toggleable because it is one extra call.
+        val wantsTimeline = prefs.isAdvisor && prefs.advisorTimeline &&
+            prefs.judgeProvider == Prefs.PROVIDER_CHAT
+        if (wantsTimeline) main.post { overlay?.beginTimeline() }
         main.post { overlay?.showLoading(); overlay?.setNote(snapshot.note) }
         val client = JevClient(prefs)
         val rel = prefs.relationship
@@ -353,6 +359,14 @@ open class ChatCaptureService : AccessibilityService() {
                 main.post {
                     analyzing = false
                     overlay?.showReplies(ranked, replyError) { text -> fillInput(text) }
+                }
+            }
+            // Per-message annotations run in parallel with the draft; they land
+            // whenever they land (the panel shows 生成中… until then).
+            if (wantsTimeline) {
+                submit {
+                    val tl = client.judgeTimeline(snapshot, rel)
+                    main.post { overlay?.showTimeline(tl.items, tl.error) }
                 }
             }
         }

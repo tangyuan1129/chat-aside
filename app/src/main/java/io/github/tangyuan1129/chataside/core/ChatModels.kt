@@ -54,3 +54,18 @@ data class Analysis(
 data class Choice(val choice: String, val confidence: Double, val probabilities: Map<String, Double>)
 data class Score(val score: Double, val confidence: Double, val maxLevel: Int)
 data class RankedReply(val text: String, val prob: Double)
+
+/**
+ * One per-message annotation of the advisor timeline: the quoted message
+ * ([text], copied from the snapshot so the panel never trusts the model's
+ * echo) and the model's note lines for it, each already phrased for display
+ * ("当前真实意图：确认你在不在乎她 72% / 生气想吵架 20%").
+ */
+data class TimelineNote(val index: Int, val text: String, val lines: List<String>)
+
+/** Result of the per-message timeline call. [error] mirrors [Analysis.error]. */
+data class TimelineResult(
+    val items: List<TimelineNote>,
+    val error: String? = null,
+    val latencyMs: Long = 0
+)

@@ -7,6 +7,7 @@ import io.github.tangyuan1129.chataside.core.Choice
 import io.github.tangyuan1129.chataside.core.Prefs
 import io.github.tangyuan1129.chataside.core.RankedReply
 import io.github.tangyuan1129.chataside.core.Score
+import io.github.tangyuan1129.chataside.core.TimelineResult
 import io.github.tangyuan1129.chataside.core.kb.ChatContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -60,6 +61,49 @@ class JudgeClient(private val prefs: Prefs) {
             JevQuestions.rankQuestion(candidates).getJSONObject("best_reply"))
         val answers = postDecisions(snapshot, relationship, ctx, questions)
         return parseRanked(answers.optJSONObject("best_reply"), candidates)
+    }
+
+    /**
+     * Per-message annotations (方案 B 时间线). Only the chat route can do
+     * this — the Jev decision protocol has no "annotate each message" question
+     * type — so any other judge provider returns an explanatory error and the
+     * panel keeps its per-thread detail block instead.
+     */
+    fun judgeTimeline(snapshot: ChatSnapshot, relationship: String): TimelineResult {
+        val start = System.currentTimeMillis()
+        if (prefs.judgeProvider != Prefs.PROVIDER_CHAT) {
+            return TimelineResult(emptyList(), "逐条批注只在「聊天模型兼任判断」档位可用", 0)
+        }
+        return try {
+            val content = chatComplete(JevTimeline.systemPrompt(), JevTimeline.userPrompt(snapshot, relationship))
+            val items = JevTimeline.parse(content, snapshot)
+                ?: throw ApiException(Route.JUDGE, null, "模型没有按要求返回批注 JSON：${content.take(80)}")
+            TimelineResult(items, null, System.currentTimeMillis() - start)
+        } catch (e: Exception) {
+            Log.w(TAG, "timeline failed: ${e.message}")
+            TimelineResult(emptyList(), e.message ?: "批注请求失败", System.currentTimeMillis() - start)
+        }
+    }
+
+    /** One chat completion, assistant text back. Chat-route only; throws on
+     *  empty content so the caller can surface a real error. */
+    private fun chatComplete(system: String, user: String): String {
+        val messages = JSONArray()
+            .put(JSONObject().put("role", "system").put("content", system))
+            .put(JSONObject().put("role", "user").put("content", user))
+        val url = prefs.judgeEndpoint()
+        val body = JSONObject()
+            .put("model", prefs.judgeModel)
+            .put("messages", messages)
+            .put("temperature", 0.0)
+        val resp = HttpJson.post(url, prefs.judgeKey, body, Route.JUDGE, HttpJson.headersFor(url))
+        val content = resp.optJSONArray("choices")
+            ?.optJSONObject(0)
+            ?.optJSONObject("message")
+            ?.optString("content")
+            .orEmpty()
+        if (content.isBlank()) throw ApiException(Route.JUDGE, null, "聊天模型返回了空内容")
+        return content
     }
 
     /**
