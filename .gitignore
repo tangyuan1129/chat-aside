@@ -24,6 +24,10 @@ gradle.properties.local
 **/__pycache__/
 *.pyc
 
+# uiautomator dumps grabbed from a real device — they contain REAL chat
+# content and must never be pushed.
+ui_*.xml
+
 # OS
 .DS_Store
 Thumbs.db
